@@ -32,7 +32,7 @@ fail() {
 
 # Finds the next available LXC container ID
 find_next_id() {
-    log "Searching for the next available LXC ID..."
+    log "Searching for the next available LXC ID..." >&2
     local last_id=$(pct list | awk 'NR>1 {print $1}' | sort -n | tail -1)
     local next_id=$((last_id + 1))
     # In case there are no containers, start at 100
@@ -41,7 +41,7 @@ find_next_id() {
     while pct status "$next_id" &>/dev/null; do
         ((next_id++))
     done
-    log "Next available ID is ${next_id}"
+    log "Next available ID is ${next_id}" >&2
     echo "$next_id"
 }
 # Gets a list of active, non-directory storage pools
