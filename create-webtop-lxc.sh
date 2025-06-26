@@ -122,7 +122,7 @@ main() {
     pct exec "${ctid}" -- bash -c "apt-get update && apt-get install -y curl && curl -fsSL https://get.docker.com | sh" || fail "Docker installation failed."
 
     log "Deploying Webtop container..."
-    local webtop_cmd="docker run -d --name=webtop -e PUID=1000 -e PGID=1000 -p 3000:3000 -v webtop-config:/config --shm-size=\"1gb\" --restart unless-stopped lscr.io/linuxserver/webtop:latest"
+    local webtop_cmd="docker run -d --name=webtop -e PUID=1000 -e PGID=1000 -p 3000:3000 -v webtop-config:/config --shm-size=\"1gb\" --security-opt apparmor=unconfined --restart unless-stopped lscr.io/linuxserver/webtop:latest"
     pct exec "${ctid}" -- bash -c "$webtop_cmd" || fail "Webtop docker container deployment failed."
 
     local container_ip=$(pct exec ${ctid} -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
