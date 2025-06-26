@@ -22,16 +22,14 @@ fail() {
     exit 1
 }
 
-# Finds the first available LXC/VM ID (Logic from user's v15 script)
+# Finds the first available LXC/VM ID, starting from 100
 find_next_id() {
-    log "Searching for the first available LXC/VM ID..."
-    local last_id=$( (pct list | awk 'NR>1 {print $1}'; qm list | awk 'NR>1 {print $1}') | sort -n | tail -1)
-    [[ -z "$last_id" ]] && last_id=99
-    local id=$((last_id + 1))
+    log "Searching for the first available LXC/VM ID from 100 upwards..." >&2
+    local id=100
     while pct status "$id" &>/dev/null || qm status "$id" &>/dev/null; do
         ((id++))
     done
-    log "First available ID is ${id}"
+    log "First available ID is ${id}" >&2
     echo "$id"
 }
 
@@ -62,8 +60,9 @@ select_from_list() {
 # Gets a list of local templates from a given storage pool
 get_local_templates() {
     local storage=$1
-    log "Checking for existing templates on '${storage}'..."
-    pvesm list "${storage}" --content vztmpl | awk 'NR>1 {print $2}' || true
+    log "Checking for existing templates on '${storage}'..." >&2
+    # Use awk to split by '/' and print the last field (the filename)
+    pvesm list "${storage}" --content vztmpl | awk -F/ 'NR>1 {print $NF}' || true
 }
 
 # --- Main Execution ---
