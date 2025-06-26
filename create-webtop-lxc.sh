@@ -1,15 +1,17 @@
 #!/bin/bash
 #
 # Proxmox Interactive LXC Creator for Webtop (Docker)
-# Version: 18
-# - New Feature: Asks user to choose between local or remote templates.
-# - New Feature: Auto-selects storage pools if only one is available.
-# - New Feature: Default hostname changed to 'webtop'.
+# Version: 19
+# - New Feature: Custom, cleaner prompt for all selection menus.
 
 # --- Global Settings ---
 set -Eeuo pipefail
 LOG_FILE="/tmp/webtop-lxc-creation-$(date +%F-%H%M%S).log"
 exec > >(tee -a "${LOG_FILE}") 2>&1
+
+# MODIFICATION: Set a custom prompt for all 'select' menus.
+# $'\n\t> ' creates a newline, then a tab, then the '> ' prompt.
+PS3=$'\n\t> '
 
 # --- Helper Functions ---
 log() { echo "[INFO] ===> $1" >&2; }
@@ -61,11 +63,10 @@ get_local_templates() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Webtop LXC Deployment (v18)..."
+    log "Starting Webtop LXC Deployment (v19)..."
 
     # --- Configuration ---
     local ctid=$(find_next_id)
-    # MODIFICATION: Default hostname is now 'webtop'
     read -p "--> Enter a hostname for the new container [webtop]: " hostname < /dev/tty
     hostname=${hostname:-"webtop"}
     read -s -p "--> Enter a secure root password for the container: " password < /dev/tty; echo
