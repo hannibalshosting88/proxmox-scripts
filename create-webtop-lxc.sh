@@ -1,11 +1,10 @@
 #!/bin/bash
 #
 # Proxmox Interactive LXC Creator for Webtop (Docker)
-# Version: 17 (Definitive)
-# - Merges best logic from user-provided script (v15)
-# - Globally fixes output pollution bug by redirecting logs to stderr.
-# - Integrates superior ID finding logic.
-# - Automatically preps LXC for Docker nesting.
+# Version: 18
+# - New Feature: Asks user to choose between local or remote templates.
+# - New Feature: Auto-selects storage pools if only one is available.
+# - New Feature: Default hostname changed to 'webtop'.
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -13,7 +12,6 @@ LOG_FILE="/tmp/webtop-lxc-creation-$(date +%F-%H%M%S).log"
 exec > >(tee -a "${LOG_FILE}") 2>&1
 
 # --- Helper Functions ---
-# All log functions now write to STDERR to avoid polluting command substitution
 log() { echo "[INFO] ===> $1" >&2; }
 warn() { echo "[WARN] ==> $1" >&2; }
 fail() {
@@ -22,27 +20,24 @@ fail() {
     exit 1
 }
 
-# Finds the first available LXC/VM ID, starting from 100
 find_next_id() {
-    log "Searching for the first available LXC/VM ID from 100 upwards..." >&2
+    log "Searching for the first available LXC/VM ID from 100 upwards..."
     local id=100
     while pct status "$id" &>/dev/null || qm status "$id" &>/dev/null; do
         ((id++))
     done
-    log "First available ID is ${id}" >&2
+    log "First available ID is ${id}"
     echo "$id"
 }
 
-# Gets a list of active, non-directory storage pools for a given content type
 get_storage_pools() {
     local content_type=$1
     pvesm status --content "${content_type}" | awk 'NR>1 {print $1}'
 }
 
-# Interactive prompt to select an item from a list
 select_from_list() {
     local prompt_message=$1
-    local -n options_ref=$2 # Pass array by reference
+    local -n options_ref=$2
     local selected_item
 
     log "${prompt_message}"
@@ -57,54 +52,79 @@ select_from_list() {
     echo "$selected_item"
 }
 
-# Gets a list of local templates from a given storage pool
 get_local_templates() {
     local storage=$1
-    log "Checking for existing templates on '${storage}'..." >&2
-    # awk '{print $1}' will grab only the filename from each line
+    log "Checking for existing templates on '${storage}'..."
     pvesm list "${storage}" --content vztmpl | awk 'NR>1 {print $1}' || true
 }
 
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Webtop LXC Deployment (v17)..."
+    log "Starting Webtop LXC Deployment (v18)..."
 
     # --- Configuration ---
     local ctid=$(find_next_id)
-    read -p "--> Enter a hostname for the new container [webtop-${ctid}]: " hostname < /dev/tty
-    hostname=${hostname:-"webtop-${ctid}"}
+    # MODIFICATION: Default hostname is now 'webtop'
+    read -p "--> Enter a hostname for the new container [webtop]: " hostname < /dev/tty
+    hostname=${hostname:-"webtop"}
     read -s -p "--> Enter a secure root password for the container: " password < /dev/tty; echo
     [[ -z "$password" ]] && fail "Password cannot be empty."
     read -p "--> Enter RAM in MB [2048]: " memory < /dev/tty; memory=${memory:-2048}
     read -p "--> Enter number of CPU cores [2]: " cores < /dev/tty; cores=${cores:-2}
     local rootfs_size="20"
 
-    # --- Storage & Template Selection ---
+    # --- Storage Selection (with auto-selection logic) ---
+    local rootfs_storage
     mapfile -t root_storage_pools < <(get_storage_pools "rootdir")
-    [[ ${#root_storage_pools[@]} -eq 0 ]] && fail "No storage for Container Disks found."
-    local rootfs_storage=$(select_from_list "Select storage for the Container Disk:" root_storage_pools)
-
-    mapfile -t tmpl_storage_pools < <(get_storage_pools "vztmpl")
-    [[ ${#tmpl_storage_pools[@]} -eq 0 ]] && fail "No storage for Templates found."
-    local template_storage=$(select_from_list "Select storage for Templates:" tmpl_storage_pools)
-
-    mapfile -t template_options < <(get_local_templates "${template_storage}")
-    template_options+=("DOWNLOAD_NEW_DEBIAN_12")
-    local selected_template_opt=$(select_from_list "Select a container template:" template_options)
-    local os_template
-
-    if [[ "$selected_template_opt" == "DOWNLOAD_NEW_DEBIAN_12" ]]; then
-        local new_template="debian-12-standard_12.2-1_amd64.tar.zst"
-        log "Downloading Debian 12 template to '${template_storage}'..."
-        pveam download "${template_storage}" "${new_template}" || fail "Template download failed."
-        os_template="${template_storage}:vztmpl/${new_template}"
+    if [[ ${#root_storage_pools[@]} -eq 0 ]]; then
+        fail "No storage for Container Disks found."
+    elif [[ ${#root_storage_pools[@]} -eq 1 ]]; then
+        rootfs_storage=${root_storage_pools[0]}
+        log "Auto-selected single available disk storage: ${rootfs_storage}"
     else
-         os_template="${selected_template_opt}"
+        rootfs_storage=$(select_from_list "Select storage for the Container Disk:" root_storage_pools)
     fi
+
+    local template_storage
+    mapfile -t tmpl_storage_pools < <(get_storage_pools "vztmpl")
+    if [[ ${#tmpl_storage_pools[@]} -eq 0 ]]; then
+        fail "No storage for Templates found."
+    elif [[ ${#tmpl_storage_pools[@]} -eq 1 ]]; then
+        template_storage=${tmpl_storage_pools[0]}
+        log "Auto-selected single available template storage: ${template_storage}"
+    else
+        template_storage=$(select_from_list "Select storage for Templates:" tmpl_storage_pools)
+    fi
+
+    # --- Template Selection (with Local/Download choice) ---
+    local os_template
+    log "Use a local template or download a new one?"
+    select template_source in "Use an existing local template" "Download a new template"; do
+        case $template_source in
+            "Use an existing local template")
+                mapfile -t local_templates < <(get_local_templates "${template_storage}")
+                if [[ ${#local_templates[@]} -eq 0 ]]; then
+                    fail "No local templates found on storage '${template_storage}'. Please choose the download option instead."
+                fi
+                local selected_template_opt=$(select_from_list "Select a local template:" local_templates)
+                os_template="${selected_template_opt}"
+                break
+                ;;
+            "Download a new template")
+                log "Fetching list of available templates from Proxmox..."
+                mapfile -t remote_templates < <(pveam available --section system | awk 'NR>1 {print $2}')
+                local selected_template_file=$(select_from_list "Select a template to download:" remote_templates)
+                log "Downloading ${selected_template_file} to '${template_storage}'..."
+                pveam download "${template_storage}" "${selected_template_file}" || fail "Template download failed."
+                os_template="${template_storage}:vztmpl/${selected_template_file}"
+                break
+                ;;
+        esac
+    done < /dev/tty
     log "Selected template: ${os_template}"
 
-    # --- Create and Configure LXC ---
+    # --- Create, Configure, and Deploy ---
     log "Creating LXC container '${hostname}' (ID: ${ctid})..."
     pct create "${ctid}" "${os_template}" --hostname "${hostname}" --password "${password}" \
         --memory "${memory}" --cores "${cores}" --net0 name=eth0,bridge=vmbr0,ip=dhcp \
@@ -117,7 +137,6 @@ main() {
     pct start ${ctid}
     sleep 10
 
-    # --- Install Dependencies & Deploy Webtop ---
     log "Installing Docker..."
     pct exec "${ctid}" -- bash -c "apt-get update && apt-get install -y curl && curl -fsSL https://get.docker.com | sh" || fail "Docker installation failed."
 
