@@ -61,8 +61,8 @@ select_from_list() {
 get_local_templates() {
     local storage=$1
     log "Checking for existing templates on '${storage}'..." >&2
-    # Use awk to split by '/' and print the last field (the filename)
-    pvesm list "${storage}" --content vztmpl | awk -F/ 'NR>1 {print $NF}' || true
+    # awk '{print $1}' will grab only the filename from each line
+    pvesm list "${storage}" --content vztmpl | awk 'NR>1 {print $1}' || true
 }
 
 # --- Main Execution ---
