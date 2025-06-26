@@ -126,17 +126,17 @@ main() {
 
     # --- Get Configuration ---
     local ctid=$(find_next_id)
-    read -p "--> Enter a hostname for the new container [webtop-${ctid}]: " hostname
+    read -p "--> Enter a hostname for the new container [webtop-${ctid}]: " hostname < /dev/tty
     hostname=${hostname:-"webtop-${ctid}"}
 
-    read -s -p "--> Enter a secure root password for the container: " password
+    read -s -p "--> Enter a secure root password for the container: " password < /dev/tty
     echo
     [[ -z "$password" ]] && fail "Password cannot be empty."
 
-    read -p "--> Enter RAM in MB [2048]: " memory
+    read -p "--> Enter RAM in MB [2048]: " memory < /dev/tty
     memory=${memory:-2048}
 
-    read -p "--> Enter number of CPU cores [2]: " cores
+    read -p "--> Enter number of CPU cores [2]: " cores < /dev/tty
     cores=${cores:-2}
 
     # --- Storage Selection ---
