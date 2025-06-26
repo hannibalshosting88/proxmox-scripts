@@ -133,6 +133,8 @@ main() {
 
     log "Configuring LXC for Docker support..."
     pct set ${ctid} --features nesting=1,keyctl=1
+    # Set a reliable DNS server to ensure network access on boot
+    pct set ${ctid} --nameserver 8.8.8.8
     
     log "Starting container..."
     pct start ${ctid}
