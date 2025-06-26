@@ -78,7 +78,7 @@ main() {
     [[ -z "$password" ]] && fail "Password cannot be empty."
     read -p "--> Enter RAM in MB [2048]: " memory < /dev/tty; memory=${memory:-2048}
     read -p "--> Enter number of CPU cores [2]: " cores < /dev/tty; cores=${cores:-2}
-    local rootfs_size="20G"
+    local rootfs_size="20"
 
     # --- Storage & Template Selection ---
     mapfile -t root_storage_pools < <(get_storage_pools "rootdir")
