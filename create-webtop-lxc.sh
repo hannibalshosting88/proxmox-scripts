@@ -100,7 +100,7 @@ main() {
         pveam download "${template_storage}" "${new_template}" || fail "Template download failed."
         os_template="${template_storage}:vztmpl/${new_template}"
     else
-        os_template="${template_storage}:vztmpl/${selected_template_opt}"
+         os_template="${selected_template_opt}"
     fi
     log "Selected template: ${os_template}"
 
