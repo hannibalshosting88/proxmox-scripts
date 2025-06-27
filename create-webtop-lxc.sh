@@ -139,7 +139,11 @@ main() {
    log "Starting container..."
     pct start ${ctid}
     
+    log "Pausing for 5 seconds to allow container to settle..."
+    sleep 5
+    
     log "Waiting for network to become fully operational..."
+
     local attempts=0
     # Loop until we can successfully ping Google's DNS, with a 30-second timeout.
     while ! pct exec "${ctid}" -- ping -c 1 -W 2 8.8.8.8 &>/dev/null; do
