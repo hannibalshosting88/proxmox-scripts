@@ -136,7 +136,7 @@ main() {
     # Set a reliable DNS server to ensure network access on boot
     pct set ${ctid} --nameserver 8.8.8.8
     
-   log "Starting container..."
+    log "Starting container..."
     pct start ${ctid}
     
     log "Pausing for 5 seconds to allow container to settle..."
