@@ -1,16 +1,13 @@
 #!/bin/bash
 #
-# Proxmox Interactive LXC Creator for Webtop (Docker)
-# Version: 19
-# - New Feature: Custom, cleaner prompt for all selection menus.
+# Proxmox Interactive LXC Creator for a basic Docker container
+# Version: 21 (Stable Base)
+# - Switched to a guaranteed-stable Docker image for final testing.
 
 # --- Global Settings ---
 set -Eeuo pipefail
-LOG_FILE="/tmp/webtop-lxc-creation-$(date +%F-%H%M%S).log"
+LOG_FILE="/tmp/docker-lxc-creation-$(date +%F-%H%M%S).log"
 exec > >(tee -a "${LOG_FILE}") 2>&1
-
-# MODIFICATION: Set a custom prompt for all 'select' menus.
-# $'\n\t> ' creates a newline, then a tab, then the '> ' prompt.
 PS3=$'\n\t> '
 
 # --- Helper Functions ---
@@ -63,67 +60,31 @@ get_local_templates() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Webtop LXC Deployment (v19)..."
+    log "Starting Docker LXC Deployment (v21)..."
 
     # --- Configuration ---
     local ctid=$(find_next_id)
-    read -p "--> Enter a hostname for the new container [webtop]: " hostname < /dev/tty
-    hostname=${hostname:-"webtop"}
+    read -p "--> Enter a hostname for the new container [docker-host]: " hostname < /dev/tty
+    hostname=${hostname:-"docker-host"}
     read -s -p "--> Enter a secure root password for the container: " password < /dev/tty; echo
     [[ -z "$password" ]] && fail "Password cannot be empty."
-    read -p "--> Enter RAM in MB [2048]: " memory < /dev/tty; memory=${memory:-2048}
-    read -p "--> Enter number of CPU cores [2]: " cores < /dev/tty; cores=${cores:-2}
-    local rootfs_size="20"
+    read -p "--> Enter RAM in MB [1024]: " memory < /dev/tty; memory=${memory:-1024}
+    read -p "--> Enter number of CPU cores [1]: " cores < /dev/tty; cores=${cores:-1}
+    local rootfs_size="10"
 
-    # --- Storage Selection (with auto-selection logic) ---
-    local rootfs_storage
+    # --- Storage & Template Selection ---
     mapfile -t root_storage_pools < <(get_storage_pools "rootdir")
-    if [[ ${#root_storage_pools[@]} -eq 0 ]]; then
-        fail "No storage for Container Disks found."
-    elif [[ ${#root_storage_pools[@]} -eq 1 ]]; then
-        rootfs_storage=${root_storage_pools[0]}
-        log "Auto-selected single available disk storage: ${rootfs_storage}"
-    else
-        rootfs_storage=$(select_from_list "Select storage for the Container Disk:" root_storage_pools)
-    fi
+    [[ ${#root_storage_pools[@]} -eq 0 ]] && fail "No storage for Container Disks found."
+    local rootfs_storage=$(select_from_list "Select storage for the Container Disk:" root_storage_pools)
 
-    local template_storage
     mapfile -t tmpl_storage_pools < <(get_storage_pools "vztmpl")
-    if [[ ${#tmpl_storage_pools[@]} -eq 0 ]]; then
-        fail "No storage for Templates found."
-    elif [[ ${#tmpl_storage_pools[@]} -eq 1 ]]; then
-        template_storage=${tmpl_storage_pools[0]}
-        log "Auto-selected single available template storage: ${template_storage}"
-    else
-        template_storage=$(select_from_list "Select storage for Templates:" tmpl_storage_pools)
-    fi
-
-    # --- Template Selection (with Local/Download choice) ---
-    local os_template
-    log "Use a local template or download a new one?"
-    select template_source in "Use an existing local template" "Download a new template"; do
-        case $template_source in
-            "Use an existing local template")
-                mapfile -t local_templates < <(get_local_templates "${template_storage}")
-                if [[ ${#local_templates[@]} -eq 0 ]]; then
-                    fail "No local templates found on storage '${template_storage}'. Please choose the download option instead."
-                fi
-                local selected_template_opt=$(select_from_list "Select a local template:" local_templates)
-                os_template="${selected_template_opt}"
-                break
-                ;;
-            "Download a new template")
-                log "Fetching list of available templates from Proxmox..."
-                mapfile -t remote_templates < <(pveam available --section system | awk 'NR>1 {print $2}')
-                local selected_template_file=$(select_from_list "Select a template to download:" remote_templates)
-                log "Downloading ${selected_template_file} to '${template_storage}'..."
-                pveam download "${template_storage}" "${selected_template_file}" || fail "Template download failed."
-                os_template="${template_storage}:vztmpl/${selected_template_file}"
-                break
-                ;;
-        esac
-    done < /dev/tty
-    log "Selected template: ${os_template}"
+    [[ ${#tmpl_storage_pools[@]} -eq 0 ]] && fail "No storage for Templates found."
+    local template_storage=$(select_from_list "Select storage for Templates:" tmpl_storage_pools)
+    
+    log "Using Debian 12 as the base template for this test."
+    local new_template="debian-12-standard_12.2-1_amd64.tar.zst"
+    pveam download "${template_storage}" "${new_template}" >/dev/null 2>&1 || log "Template already exists. Continuing."
+    local os_template="${template_storage}:vztmpl/${new_template}"
 
     # --- Create, Configure, and Deploy ---
     log "Creating LXC container '${hostname}' (ID: ${ctid})..."
@@ -133,38 +94,27 @@ main() {
 
     log "Configuring LXC for Docker support..."
     pct set ${ctid} --features nesting=1,keyctl=1
-    # Set a reliable DNS server to ensure network access on boot
     pct set ${ctid} --nameserver 8.8.8.8
     
-    log "Starting container..."
+    log "Starting container and waiting for network..."
     pct start ${ctid}
-    
-    log "Pausing for 5 seconds to allow container to settle..."
-    sleep 5
-    
-    log "Waiting for network to become fully operational..."
-
+    sleep 5 # Settle time
     local attempts=0
-    # Loop until we can successfully ping Google's DNS, with a 30-second timeout.
     while ! pct exec "${ctid}" -- ping -c 1 -W 2 8.8.8.8 &>/dev/null; do
-        ((attempts++))
-        if [ "$attempts" -ge 15 ]; then
-            fail "Network did not come online within 30 seconds."
-        fi
-        sleep 2
+        ((attempts++)); if [ "$attempts" -ge 15 ]; then fail "Network did not come online."; fi; sleep 2
     done
     log "Network is online."
 
     log "Installing Docker..."
     pct exec "${ctid}" -- bash -c "apt-get update && apt-get install -y curl && curl -fsSL https://get.docker.com | sh" || fail "Docker installation failed."
 
-    log "Deploying Webtop container..."
-    local webtop_cmd="docker run -d --name=webtop -e PUID=1000 -e PGID=1000 -e DOCKER_MODS=linuxserver/mods:webtop-xrdp -p 3000:3000 -v webtop-config:/config --shm-size=\"1gb\" --security-opt apparmor=unconfined --restart unless-stopped lscr.io/linuxserver/webtop:latest"
-    pct exec "${ctid}" -- bash -c "$webtop_cmd" || fail "Webtop docker container deployment failed."
+    log "Deploying a simple test container..."
+    local test_cmd="docker run -d -p 8080:80 docker/getting-started"
+    pct exec "${ctid}" -- bash -c "$test_cmd" || fail "Test docker container deployment failed."
 
     local container_ip=$(pct exec ${ctid} -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
     log "SUCCESS: Deployment complete."
-    log "Webtop is accessible at: http://${container_ip}:3000"
+    log "The test container is accessible at: http://${container_ip}:8080"
 }
 
 main "$@"
