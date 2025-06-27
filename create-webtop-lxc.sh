@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 # Proxmox Interactive LXC Creator for a basic Docker container
-# Version: 21 (Stable Base)
-# - Switched to a guaranteed-stable Docker image for final testing.
+# Version: 22 (Adaptive Template)
+# - Intelligently finds an existing Debian 12 template before downloading.
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -51,16 +51,10 @@ select_from_list() {
     echo "$selected_item"
 }
 
-get_local_templates() {
-    local storage=$1
-    log "Checking for existing templates on '${storage}'..."
-    pvesm list "${storage}" --content vztmpl | awk 'NR>1 {print $1}' || true
-}
-
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Docker LXC Deployment (v21)..."
+    log "Starting Docker LXC Deployment (v22)..."
 
     # --- Configuration ---
     local ctid=$(find_next_id)
@@ -81,10 +75,22 @@ main() {
     [[ ${#tmpl_storage_pools[@]} -eq 0 ]] && fail "No storage for Templates found."
     local template_storage=$(select_from_list "Select storage for Templates:" tmpl_storage_pools)
     
-    log "Using Debian 12 as the base template for this test."
-    local new_template="debian-12-standard_12.2-1_amd64.tar.zst"
-    pveam download "${template_storage}" "${new_template}" >/dev/null 2>&1 || log "Template already exists. Continuing."
-    local os_template="${template_storage}:vztmpl/${new_template}"
+    # MODIFICATION: Intelligently find or download the debian template
+    log "Checking for a Debian 12 template on '${template_storage}'..."
+    local os_template
+    # Find the first template on the selected storage containing 'debian-12'
+    local found_template=$(pvesm list "${template_storage}" --content vztmpl | grep "debian-12" | awk '{print $1}' | head -n 1)
+
+    if [[ -n "$found_template" ]]; then
+        log "Found existing template: ${found_template}"
+        os_template=$found_template
+    else
+        warn "No Debian 12 template found. Downloading a new one..."
+        local new_template_name="debian-12-standard_12.2-1_amd64.tar.zst"
+        pveam download "${template_storage}" "${new_template_name}" || fail "Template download failed."
+        os_template="${template_storage}:vztmpl/${new_template_name}"
+    fi
+    log "Using template: ${os_template}"
 
     # --- Create, Configure, and Deploy ---
     log "Creating LXC container '${hostname}' (ID: ${ctid})..."
