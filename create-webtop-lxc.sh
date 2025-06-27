@@ -136,9 +136,20 @@ main() {
     # Set a reliable DNS server to ensure network access on boot
     pct set ${ctid} --nameserver 8.8.8.8
     
-    log "Starting container..."
+   log "Starting container..."
     pct start ${ctid}
-    sleep 10
+    
+    log "Waiting for network to become fully operational..."
+    local attempts=0
+    # Loop until we can successfully ping Google's DNS, with a 30-second timeout.
+    while ! pct exec "${ctid}" -- ping -c 1 -W 2 8.8.8.8 &>/dev/null; do
+        ((attempts++))
+        if [ "$attempts" -ge 15 ]; then
+            fail "Network did not come online within 30 seconds."
+        fi
+        sleep 2
+    done
+    log "Network is online."
 
     log "Installing Docker..."
     pct exec "${ctid}" -- bash -c "apt-get update && apt-get install -y curl && curl -fsSL https://get.docker.com | sh" || fail "Docker installation failed."
