@@ -1,8 +1,7 @@
 #!/bin/bash
 #
 # Proxmox Interactive LXC Creator for a basic Docker container
-# Version: 22 (Adaptive Template)
-# - Intelligently finds an existing Debian 12 template before downloading.
+# Version: 23 (Definitive, All Fixes)
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -54,7 +53,7 @@ select_from_list() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Docker LXC Deployment (v22)..."
+    log "Starting Docker LXC Deployment (v23)..."
 
     # --- Configuration ---
     local ctid=$(find_next_id)
@@ -75,10 +74,8 @@ main() {
     [[ ${#tmpl_storage_pools[@]} -eq 0 ]] && fail "No storage for Templates found."
     local template_storage=$(select_from_list "Select storage for Templates:" tmpl_storage_pools)
     
-    # MODIFICATION: Intelligently find or download the debian template
     log "Checking for a Debian 12 template on '${template_storage}'..."
     local os_template
-    # Find the first template on the selected storage containing 'debian-12'
     local found_template=$(pvesm list "${template_storage}" --content vztmpl | grep "debian-12" | awk '{print $1}' | head -n 1)
 
     if [[ -n "$found_template" ]]; then
@@ -102,9 +99,13 @@ main() {
     pct set ${ctid} --features nesting=1,keyctl=1
     pct set ${ctid} --nameserver 8.8.8.8
     
-    log "Starting container and waiting for network..."
+    log "Starting container..."
     pct start ${ctid}
-    sleep 5 # Settle time
+    
+    log "Pausing for 5 seconds to allow container to settle..."
+    sleep 5
+    
+    log "Waiting for network to become fully operational..."
     local attempts=0
     while ! pct exec "${ctid}" -- ping -c 1 -W 2 8.8.8.8 &>/dev/null; do
         ((attempts++)); if [ "$attempts" -ge 15 ]; then fail "Network did not come online."; fi; sleep 2
