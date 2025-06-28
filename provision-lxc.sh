@@ -1,9 +1,9 @@
 #!/bin/bash
 #
 # Proxmox LXC Provisioning Script
-# Version: 30 (Definitive)
-# - Pre-installs curl in the new container.
-# - Provides a generic command template as its final output.
+# Version: 31 (Definitive)
+# - Prints success and next-step instructions immediately after container start
+#   to work around 'curl|bash' execution environment limitations.
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -41,7 +41,7 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v30)..."
+    log "Starting Generic LXC Provisioning (v31)..."
 
     # --- Configuration ---
     local ctid=$(find_next_id)
@@ -104,20 +104,8 @@ main() {
     
     log "Starting container..."
     pct start ${ctid}
-    log "Pausing for 5 seconds to allow container to settle..."
-    sleep 5
-    
-    log "Waiting for network to become fully operational..."
-    local attempts=0
-    while ! pct exec "${ctid}" -- ping -c 1 -W 2 8.8.8.8 &>/dev/null; do
-        ((attempts++)); if [ "$attempts" -ge 15 ]; then fail "Network did not come online."; fi; sleep 2
-    done
-    log "Network is online."
 
-    log "Priming container by installing curl..."
-    pct exec ${ctid} -- bash -c "apt-get update >/dev/null && apt-get install -y curl >/dev/null" || warn "Could not install curl, it may already exist."
-    
-    # --- Final Output ---
+    # --- FINAL OUTPUT - MOVED TO RUN BEFORE POTENTIALLY FAILING COMMANDS ---
     echo
     log "SUCCESS: Provisioning complete."
     log "Container '${hostname}' (ID: ${ctid}) is running and ready for configuration."
@@ -130,6 +118,23 @@ main() {
     log "For example, to run 'install-desktop.sh', you would use:"
     echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop.sh | bash\"\e[0m"
     echo
+    
+    # --- Best-Effort Finalization ---
+    log "Attempting to prime container with network check and curl installation..."
+    sleep 5
+    
+    local attempts=0
+    while ! pct exec "${ctid}" -- ping -c 1 -W 2 8.8.8.8 &>/dev/null; do
+        ((attempts++)); if [ "$attempts" -ge 15 ]; then
+            warn "Network check timed out. You may need to wait a moment before running the next command."
+            exit 0 # Exit cleanly, the user already has instructions.
+        fi
+        sleep 2
+    done
+    log "Network is confirmed online."
+
+    pct exec ${ctid} -- bash -c "apt-get update >/dev/null && apt-get install -y curl >/dev/null" || warn "Could not pre-install curl. You may need to run 'apt-get update && apt-get install curl' manually inside the container."
+    log "Priming complete."
 }
 
 main "$@"
