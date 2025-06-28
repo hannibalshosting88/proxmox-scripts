@@ -1,11 +1,12 @@
 #!/bin/bash
 #
-# Proxmox Interactive LXC Creator for a basic Docker container
-# Version: 23 (Definitive, All Fixes)
+# Proxmox Interactive LXC Creator for an Ephemeral Web Desktop
+# Version: 24 (Production)
+# - Deploys a stable LXDE desktop via dorowu/ubuntu-desktop-lxde-vnc
 
 # --- Global Settings ---
 set -Eeuo pipefail
-LOG_FILE="/tmp/docker-lxc-creation-$(date +%F-%H%M%S).log"
+LOG_FILE="/tmp/desktop-lxc-creation-$(date +%F-%H%M%S).log"
 exec > >(tee -a "${LOG_FILE}") 2>&1
 PS3=$'\n\t> '
 
@@ -53,16 +54,16 @@ select_from_list() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Docker LXC Deployment (v23)..."
+    log "Starting Web Desktop LXC Deployment (v24)..."
 
     # --- Configuration ---
     local ctid=$(find_next_id)
-    read -p "--> Enter a hostname for the new container [docker-host]: " hostname < /dev/tty
-    hostname=${hostname:-"docker-host"}
+    read -p "--> Enter a hostname for the new container [web-desktop]: " hostname < /dev/tty
+    hostname=${hostname:-"web-desktop"}
     read -s -p "--> Enter a secure root password for the container: " password < /dev/tty; echo
     [[ -z "$password" ]] && fail "Password cannot be empty."
-    read -p "--> Enter RAM in MB [1024]: " memory < /dev/tty; memory=${memory:-1024}
-    read -p "--> Enter number of CPU cores [1]: " cores < /dev/tty; cores=${cores:-1}
+    read -p "--> Enter RAM in MB [2048]: " memory < /dev/tty; memory=${memory:-2048}
+    read -p "--> Enter number of CPU cores [2]: " cores < /dev/tty; cores=${cores:-2}
     local rootfs_size="10"
 
     # --- Storage & Template Selection ---
@@ -74,10 +75,9 @@ main() {
     [[ ${#tmpl_storage_pools[@]} -eq 0 ]] && fail "No storage for Templates found."
     local template_storage=$(select_from_list "Select storage for Templates:" tmpl_storage_pools)
     
-    log "Checking for a Debian 12 template on '${template_storage}'..."
-    local os_template
+    log "Using Debian 12 as the base template."
     local found_template=$(pvesm list "${template_storage}" --content vztmpl | grep "debian-12" | awk '{print $1}' | head -n 1)
-
+    local os_template
     if [[ -n "$found_template" ]]; then
         log "Found existing template: ${found_template}"
         os_template=$found_template
@@ -99,13 +99,9 @@ main() {
     pct set ${ctid} --features nesting=1,keyctl=1
     pct set ${ctid} --nameserver 8.8.8.8
     
-    log "Starting container..."
+    log "Starting container and waiting for network..."
     pct start ${ctid}
-    
-    log "Pausing for 5 seconds to allow container to settle..."
-    sleep 5
-    
-    log "Waiting for network to become fully operational..."
+    sleep 5 # Settle time
     local attempts=0
     while ! pct exec "${ctid}" -- ping -c 1 -W 2 8.8.8.8 &>/dev/null; do
         ((attempts++)); if [ "$attempts" -ge 15 ]; then fail "Network did not come online."; fi; sleep 2
@@ -115,13 +111,13 @@ main() {
     log "Installing Docker..."
     pct exec "${ctid}" -- bash -c "apt-get update && apt-get install -y curl && curl -fsSL https://get.docker.com | sh" || fail "Docker installation failed."
 
-    log "Deploying a simple test container..."
-    local test_cmd="docker run -d -p 8080:80 docker/getting-started"
-    pct exec "${ctid}" -- bash -c "$test_cmd" || fail "Test docker container deployment failed."
+    log "Deploying LXDE Desktop container..."
+    local desktop_cmd="docker run -d -p 6080:80 --name=lxde-desktop dorowu/ubuntu-desktop-lxde-vnc"
+    pct exec "${ctid}" -- bash -c "$desktop_cmd" || fail "Desktop container deployment failed."
 
     local container_ip=$(pct exec ${ctid} -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
     log "SUCCESS: Deployment complete."
-    log "The test container is accessible at: http://${container_ip}:8080"
+    log "The Web Desktop is accessible at: http://${container_ip}:6080"
 }
 
 main "$@"
