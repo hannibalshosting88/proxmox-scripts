@@ -1,17 +1,15 @@
 #!/bin/bash
 #
 # All-in-One Proxmox LXC Provisioning Script
-# Version: 1.1 (Final Release)
+# Version: 1.2 (Final Polish)
 
 # --- Global Settings ---
 set -Eeuo pipefail
 LOG_FILE="/tmp/lxc-provisioning-$(date +%F-%H%M%S).log"
-# Redirect stderr to a tee process that writes to the log file and the original stderr
 exec 3>&2
 exec 2> >(tee -a "${LOG_FILE}")
 
 # --- Helper Functions ---
-# All log functions write to file descriptor 3 (the original stderr) to be clean
 log() { echo -e "\e[32m[INFO]\e[0m ===> $1" >&3; }
 warn() { echo -e "\e[33m[WARN]\e[0m ==> $1" >&3; }
 fail() {
@@ -28,19 +26,18 @@ run_with_spinner() {
     echo -ne "\e[1;33m[WORKING]\e[0m ${message} " >&3
     
     local temp_log=$(mktemp)
-    # The command's output goes to a temp log file
     "${command_to_run[@]}" &> "$temp_log" &
     local pid=$!
     
     # Corrected spinner animation loop
     while kill -0 $pid 2>/dev/null; do
         for (( i=0; i<${#spinner_chars}; i++ )); do
-            echo -ne "\e[1;33m${spinner_chars:$i:1}\e[0m\r\e[1;33m[WORKING]\e[0m ${message} " >&3
+            # MODIFICATION: Use 'printf' for maximum portability of escape codes
+            printf "\e[1;33m%s\e[0m\r\e[1;33m[WORKING]\e[0m %s " "${spinner_chars:$i:1}" "${message}" >&3
             sleep 0.1
         done
     done
     
-    # Clear the spinner line
     echo -ne "\033[2K\r" >&3
     
     local exit_code=0
@@ -64,7 +61,6 @@ find_next_id() {
 prompt_for_selection() {
     local prompt_message=$1; shift; local options=("$@")
     log "${prompt_message}"
-    # Set the select prompt variable
     PS3=$'\n\t> '
     select item in "${options[@]}"; do
         if [[ -n "$item" ]]; then echo "$item"; break; else warn "Invalid selection."; fi
@@ -74,9 +70,8 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v1.1)..."
+    log "Starting Generic LXC Provisioning (v1.2)..."
 
-    # --- Configuration ---
     local ctid=$(find_next_id)
     local hostname; while true; do read -p "--> Enter hostname [linux-lxc]: " hostname < /dev/tty; hostname=${hostname:-"linux-lxc"}; if [[ "$hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$ ]]; then break; else warn "Invalid hostname."; fi; done
     local password; while true; do read -s -p "--> Enter root password: " password < /dev/tty; echo; if [[ -n "$password" ]]; then break; else warn "Password cannot be empty."; fi; done
@@ -84,7 +79,6 @@ main() {
     read -p "--> Enter Cores [2]: " cores < /dev/tty; cores=${cores:-2}
     read -p "--> Enter Disk Size (GB) [10]: " rootfs_size < /dev/tty; rootfs_size=${rootfs_size:-10}
 
-    # --- Storage & Template Selection ---
     mapfile -t root_storage_pools < <(pvesm status --content rootdir | awk 'NR>1 {print $1}')
     local rootfs_storage; if [[ ${#root_storage_pools[@]} -eq 1 ]]; then rootfs_storage=${root_storage_pools[0]}; log "Auto-selected disk storage: ${rootfs_storage}"; else rootfs_storage=$(prompt_for_selection "Select storage for the Container Disk:" "${root_storage_pools[@]}"); fi
     mapfile -t tmpl_storage_pools < <(pvesm status --content vztmpl | awk 'NR>1 {print $1}')
@@ -106,7 +100,6 @@ main() {
             ;;
     esac
     
-    # --- Create, Configure, and Finalize ---
     log "Using template: ${os_template}"
     run_with_spinner "Creating LXC container '${hostname}' (ID: ${ctid})" pct create "${ctid}" "${os_template}" --hostname "${hostname}" --password "${password}" --memory "${memory}" --cores "${cores}" --net0 name=eth0,bridge=vmbr0,ip=dhcp --storage "${rootfs_storage}" --rootfs "${rootfs_storage}:${rootfs_size}" --onboot 1 --start 0
 
@@ -120,11 +113,10 @@ main() {
     local prime_cmd; if [[ "$os_family" == "alpine" ]]; then prime_cmd="apk update && apk add curl"; else prime_cmd="apt-get update && apt-get install -y curl"; fi
     run_with_spinner "Priming container with curl" pct exec ${ctid} -- sh -c "$prime_cmd"
     
-    # --- Final Output ---
     local container_ip=$(pct exec ${ctid} -- sh -c "ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}'")
     local gh_user="hannibalshosting88"; local gh_repo="proxmox-scripts"
     
-    echo >&3 # Print a clean newline to the user's screen
+    echo >&3
     log "SUCCESS: PROVISIONING COMPLETE."
     log "Container '${hostname}' (ID: ${ctid}) is running at IP: ${container_ip}"
     echo >&3
@@ -134,7 +126,4 @@ main() {
     echo >&3
 }
 
-# --- This is the launcher part ---
-echo "--> All-in-One script engaged..." >&3
-echo "----------------------------------------------------" >&3
 main
