@@ -1,7 +1,8 @@
 #!/bin/bash
 #
 # Proxmox LXC Provisioning Script
-# Version: 40 (Final - Hardcoded URL)
+# Version: 41 (Final Portability)
+# - Uses 'sh' instead of 'bash' in pct exec for universal OS compatibility.
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -54,7 +55,7 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v40)..."
+    log "Starting Generic LXC Provisioning (v41)..."
 
     # --- Configuration ---
     local ctid=$(find_next_id)
@@ -93,10 +94,10 @@ main() {
     run_with_spinner "Starting container" pct start ${ctid}
     
     sleep 2
-    run_with_spinner "Waiting for network" pct exec "${ctid}" -- bash -c "until bash -c 'echo > /dev/tcp/8.8.8.8/53' &>/dev/null; do sleep 1; done"
+    # MODIFICATION: Use 'sh' for universal compatibility
+    run_with_spinner "Waiting for network" pct exec "${ctid}" -- sh -c "until sh -c 'echo > /dev/tcp/8.8.8.8/53' &>/dev/null; do sleep 1; done"
 
-    # Determine OS Family for package manager
-    local os_family="debian" # Default
+    local os_family="debian"
     if echo "${os_template}" | grep -q "alpine"; then os_family="alpine"; fi
     
     local prime_cmd
@@ -105,7 +106,7 @@ main() {
     else
         prime_cmd="apt-get update && apt-get install -y curl"
     fi
-    run_with_spinner "Priming container with curl" pct exec ${ctid} -- bash -c "$prime_cmd"
+    run_with_spinner "Priming container with curl" pct exec ${ctid} -- sh -c "$prime_cmd"
     
     # --- Final Output ---
     local container_ip=$(pct exec ${ctid} -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
@@ -115,11 +116,11 @@ main() {
     echo
     log "Choose a configuration script to run from the options below:"
     
-    local gh_user="hannibalshosting88"
-    local gh_repo="proxmox-scripts"
+    local gh_user=$(echo "$1" | cut -d/ -f4); local gh_repo=$(echo "$1" | cut -d/ -f5)
     
     echo -e "\n\e[1;37m# To install the Web Desktop:\e[0m"
-    echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop.sh | bash\"\e[0m"
+    # MODIFICATION: Use 'sh' for universal compatibility
+    echo -e "\e[1;33mpct exec ${ctid} -- sh -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop.sh | sh\"\e[0m"
     echo
 }
 
