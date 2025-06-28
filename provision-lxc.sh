@@ -2,7 +2,6 @@
 #
 # Proxmox LXC Provisioning Script
 # Version: 29 (Two-Command Architecture)
-# This script ONLY provisions a new LXC and tells you the next command to run.
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -54,8 +53,8 @@ main() {
 
     # --- Storage & Template Selection ---
     mapfile -t root_storage_pools < <(pvesm status --content rootdir | awk 'NR>1 {print $1}')
-    if [[ ${#root_storage_pools[@]} -eq 0 ]]; then fail "No storage for Container Disks found."; fi
     local rootfs_storage
+    if [[ ${#root_storage_pools[@]} -eq 0 ]]; then fail "No storage for Container Disks found."; fi
     if [[ ${#root_storage_pools[@]} -eq 1 ]]; then
         rootfs_storage=${root_storage_pools[0]}
         log "Auto-selected single disk storage: ${rootfs_storage}"
@@ -64,8 +63,8 @@ main() {
     fi
 
     mapfile -t tmpl_storage_pools < <(pvesm status --content vztmpl | awk 'NR>1 {print $1}')
-    if [[ ${#tmpl_storage_pools[@]} -eq 0 ]]; then fail "No storage for Templates found."; fi
     local template_storage
+    if [[ ${#tmpl_storage_pools[@]} -eq 0 ]]; then fail "No storage for Templates found."; fi
     if [[ ${#tmpl_storage_pools[@]} -eq 1 ]]; then
         template_storage=${tmpl_storage_pools[0]}
         log "Auto-selected single template storage: ${template_storage}"
@@ -110,7 +109,6 @@ main() {
     log "Container '${hostname}' (ID: ${ctid}) is running and ready for configuration."
     echo
     log "To install the Web Desktop, run the following command:"
-    # This prints the exact command for Phase 2
     local gh_user="hannibalshosting88"
     local gh_repo="proxmox-scripts"
     echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop.sh | bash\"\e[0m"
