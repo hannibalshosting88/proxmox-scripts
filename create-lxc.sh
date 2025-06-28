@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Proxmox LXC Provisioning Script
-# Version: 1.5 (Patient DHCP Check)
+# Version: 1.6 (Definitive - Instructions First)
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -22,38 +22,15 @@ run_with_spinner() {
     local message=$1; shift
     local command_to_run=("$@")
     local spinner_chars="/-\|"
-    local timeout=600 # 10 minutes
-    
     echo -ne "\e[1;33m[WORKING]\e[0m ${message} " >&3
-    
     local temp_log=$(mktemp)
     "${command_to_run[@]}" &> "$temp_log" &
     local pid=$!
-    
-    local start_time=$(date +%s)
-    
-    while kill -0 $pid 2>/dev/null; do
-        for (( i=0; i<${#spinner_chars}; i++ )); do
-            printf "\e[1;33m%s\e[0m\r\e[1;33m[WORKING]\e[0m %s " "${spinner_chars:$i:1}" "${message}" >&3
-            sleep 0.1
-        done
-        
-        local current_time=$(date +%s)
-        if (( current_time - start_time > timeout )); then
-            warn "Task timed out after ${timeout} seconds."
-            kill $pid 2>/dev/null || true
-            fail "Operation timed out."
-        fi
-    done
-    
+    while kill -0 $pid 2>/dev/null; do for c in ${spinner_chars}; do printf "\e[1;33m%s\e[0m\r\e[1;33m[WORKING]\e[0m %s " "$c" "${message}" >&3; sleep 0.1; done; done
     echo -ne "\033[2K\r" >&3
-    
     local exit_code=0
     wait $pid || exit_code=$?
-    
-    if [ $exit_code -ne 0 ]; then
-        fail "Task '${message}' failed. Log:\n$(cat $temp_log)"
-    fi
+    if [ $exit_code -ne 0 ]; then fail "Task '${message}' failed. Log:\n$(cat $temp_log)"; fi
     rm -f "$temp_log"
     log "Task '${message}' complete."
 }
@@ -78,9 +55,8 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v1.5)..."
+    log "Starting Generic LXC Provisioning (v1.6)..."
 
-    # --- Configuration ---
     local ctid=$(find_next_id)
     local hostname; while true; do read -p "--> Enter hostname [linux-lxc]: " hostname < /dev/tty; hostname=${hostname:-"linux-lxc"}; if [[ "$hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$ ]]; then break; else warn "Invalid hostname."; fi; done
     local password; while true; do read -s -p "--> Enter root password: " password < /dev/tty; echo; if [[ -n "$password" ]]; then break; else warn "Password cannot be empty."; fi; done
@@ -88,7 +64,6 @@ main() {
     read -p "--> Enter Cores [2]: " cores < /dev/tty; cores=${cores:-2}
     read -p "--> Enter Disk Size (GB) [10]: " rootfs_size < /dev/tty; rootfs_size=${rootfs_size:-10}
 
-    # --- Storage & Template Selection ---
     mapfile -t root_storage_pools < <(pvesm status --content rootdir | awk 'NR>1 {print $1}')
     local rootfs_storage; if [[ ${#root_storage_pools[@]} -eq 1 ]]; then rootfs_storage=${root_storage_pools[0]}; log "Auto-selected disk storage: ${rootfs_storage}"; else rootfs_storage=$(prompt_for_selection "Select storage for the Container Disk:" "${root_storage_pools[@]}"); fi
     mapfile -t tmpl_storage_pools < <(pvesm status --content vztmpl | awk 'NR>1 {print $1}')
@@ -110,35 +85,32 @@ main() {
             ;;
     esac
     
-    # --- Create, Configure, and Finalize ---
     log "Using template: ${os_template}"
     run_with_spinner "Creating LXC container '${hostname}' (ID: ${ctid})" pct create "${ctid}" "${os_template}" --hostname "${hostname}" --password "${password}" --memory "${memory}" --cores "${cores}" --net0 name=eth0,bridge=vmbr0,ip=dhcp --storage "${rootfs_storage}" --rootfs "${rootfs_storage}:${rootfs_size}" --onboot 1 --start 0
 
     run_with_spinner "Configuring LXC" pct set ${ctid} --features nesting=1,keyctl=1 --nameserver 8.8.8.8
     run_with_spinner "Starting container" pct start ${ctid}
     
-    # MODIFICATION: New patient, DHCP-aware network check. Timeout set to 90 seconds.
-    log "Waiting for container to acquire IP address from DHCP..."
-    local attempts=0
-    local container_ip=""
-    while [ -z "$container_ip" ]; do
-        container_ip=$(pct exec ${ctid} -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' || true)
-        ((attempts++))
-        if [ "$attempts" -ge 45 ]; then # 45 attempts * 2s sleep = 90s timeout
-            fail "Container did not acquire an IP address within 90 seconds."
-        fi
-        sleep 2
-    done
-    log "Network is online. Acquired IP: ${container_ip}"
-
+    # --- Final Output (Instructions First) ---
+    sleep 5 # Give container a moment to get an IP
+    local container_ip=$(pct exec ${ctid} -- sh -c "ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}'" || echo "IP_NOT_YET_AVAILABLE")
+    echo >&3
+    log "SUCCESS: Provisioning complete."
+    log "Container '${hostname}' (ID: ${ctid}) is running. IP Address: ${container_ip}"
+    echo >&3
+    log "To install software, run this command:"
+    
+    local gh_user="hannibalshosting88"; local gh_repo="proxmox-scripts"
+    echo -e "\e[1;33mpct exec ${ctid} -- sh -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop.sh | sh\"\e[0m" >&3
+    echo >&3
+    
+    # --- Best-Effort Priming ---
+    log "Attempting to prime container in the background..."
     local os_family="debian"; if echo "${os_template}" | grep -q "alpine"; then os_family="alpine"; fi
     local prime_cmd; if [[ "$os_family" == "alpine" ]]; then prime_cmd="apk update && apk add curl"; else prime_cmd="apt-get update && apt-get install -y curl"; fi
-    run_with_spinner "Priming container with curl" pct exec ${ctid} -- sh -c "$prime_cmd"
-    
-    # --- Final Output ---
-    echo; log "SUCCESS: PROVISIONING COMPLETE."
-    log "Container '${hostname}' (ID: ${ctid}) is running at IP: ${container_ip}"
-    echo; log "You can now run your installer scripts."
+    # This last command may not complete in a curl|bash session, but it is not critical.
+    pct exec ${ctid} -- sh -c "$prime_cmd" &>/dev/null || warn "Container priming may not have completed."
+    log "Script finished."
 }
 
 main
