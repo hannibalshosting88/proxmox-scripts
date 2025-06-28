@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Proxmox LXC Provisioning Script
-# Version: 33 (Definitive Polish)
+# Version: 35 (Final Architecture)
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -39,16 +39,14 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v33)..."
+    log "Starting Generic LXC Provisioning (v35)..."
 
     # --- Configuration with Input Validation ---
     local ctid=$(find_next_id)
-    
     local hostname
     while true; do
         read -p "--> Enter a hostname for the new container [linux-lxc]: " hostname < /dev/tty
         hostname=${hostname:-"linux-lxc"}
-        # Ensure hostname contains only letters, numbers, and hyphens.
         if [[ "$hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$ ]]; then
             break
         else
@@ -123,29 +121,26 @@ main() {
     pct start ${ctid}
     
     # --- Final Output (Instructions First) ---
+    # Give the container a moment to get an IP before we try to display it.
+    sleep 5 
     local container_ip=$(pct exec ${ctid} -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' || echo "IP_NOT_YET_AVAILABLE")
     echo
     log "SUCCESS: Provisioning complete."
-    log "Container '${hostname}' (ID: ${ctid}) is running at IP: ${container_ip}"
+    log "Container '${hostname}' (ID: ${ctid}) is running. IP Address: ${container_ip}"
     echo
     log "Choose a configuration script to run from the options below:"
     
     local gh_user="hannibalshosting88"
     local gh_repo="proxmox-scripts"
     
-    echo -e "\n\e[1;37m# For a Web Desktop:\e[0m"
-    echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop.sh | bash -s ${container_ip}\"\e[0m"
-    
-    # --- Add more hardcoded options here in the future ---
-    # echo -e "\n\e[1;37m# For Plex Media Server:\e[0m"
-    # echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-plex.sh | bash -s ${container_ip}\"\e[0m"
+    echo -e "\n\e[1;37m# To install the Web Desktop:\e[0m"
+    # MODIFICATION: The handoff command is now simpler and more robust.
+    echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop.sh | bash\"\e[0m"
     
     echo
     
     # --- Best-Effort Finalization ---
     log "Attempting to prime container in the background..."
-    sleep 5
-    
     local attempts=0
     while ! pct exec "${ctid}" -- ping -c 1 -W 2 8.8.8.8 &>/dev/null; do
         ((attempts++)); if [ "$attempts" -ge 15 ]; then
