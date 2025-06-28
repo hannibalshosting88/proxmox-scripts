@@ -12,5 +12,5 @@ config/
 # Ignore a common folder like node_modules
 node_modules/
 
-# Ignore misnomer token files
+# Ignore misnomer files
 honeypot.txt
