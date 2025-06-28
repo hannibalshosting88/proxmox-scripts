@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 # Proxmox LXC Provisioning Script
-# Version: 37 (Definitive Reliability)
-# - The script now waits for all priming tasks to complete before exiting.
+# Version: 38 (Polished UX)
+# - Implements spinners for all long-running tasks.
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -20,27 +20,35 @@ fail() {
 }
 
 run_with_spinner() {
+    local message=$1; shift
     local command_to_run=("$@")
     local spinner_chars="/-\|"
-    log "Starting background task: ${command_to_run[*]}"
-    "${command_to_run[@]}" &
+    
+    echo -ne "\e[1;33m[WORKING]\e[0m ${message} " >&2
+    
+    "${command_to_run[@]}" &>/dev/null &
     local pid=$!
+    
     while kill -0 $pid 2>/dev/null; do
         for (( i=0; i<${#spinner_chars}; i++ )); do
-            echo -ne "\e[1;33m[WORKING]\e[0m ${spinner_chars:$i:1} \r" >&2
+            echo -ne "\e[1;33m${spinner_chars:$i:1}\e[0m\r\e[1;33m[WORKING]\e[0m ${message} " >&2
             sleep 0.1
         done
     done
-    echo -ne "\033[2K\r" >&2
+    
     local exit_code=0
     wait $pid || exit_code=$?
+    
+    echo -ne "\033[2K\r" >&2
+
     if [ $exit_code -ne 0 ]; then
-        fail "Background task failed with exit code ${exit_code}."
+        fail "Task '${message}' failed with exit code ${exit_code}."
     fi
-    log "Background task complete."
+    log "Task '${message}' complete."
 }
 
 find_next_id() {
+    # This is fast, no spinner needed.
     log "Searching for the first available LXC/VM ID..."
     local id=100
     while pct status "$id" &>/dev/null || qm status "$id" &>/dev/null; do
@@ -61,76 +69,55 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v37)..."
+    log "Starting Generic LXC Provisioning (v38)..."
 
-    # --- Pre-computation and User Input ---
+    # --- Configuration ---
     local ctid=$(find_next_id)
-
-    # Re-ordered logic to gather user input while download runs
-    mapfile -t root_storage_pools < <(pvesm status --content rootdir | awk 'NR>1 {print $1}')
-    local rootfs_storage
-    if [[ ${#root_storage_pools[@]} -eq 0 ]]; then fail "No storage for Container Disks found."; fi
-    if [[ ${#root_storage_pools[@]} -eq 1 ]]; then
-        rootfs_storage=${root_storage_pools[0]}
-        log "Auto-selected single disk storage: ${rootfs_storage}"
-    else
-        rootfs_storage=$(prompt_for_selection "Select storage for the Container Disk:" "${root_storage_pools[@]}")
-    fi
-
-    mapfile -t tmpl_storage_pools < <(pvesm status --content vztmpl | awk 'NR>1 {print $1}')
-    local template_storage
-    if [[ ${#tmpl_storage_pools[@]} -eq 0 ]]; then fail "No storage for Templates found."; fi
-    if [[ ${#tmpl_storage_pools[@]} -eq 1 ]]; then
-        template_storage=${tmpl_storage_pools[0]}
-        log "Auto-selected single template storage: ${template_storage}"
-    else
-        template_storage=$(prompt_for_selection "Select storage for Templates:" "${tmpl_storage_pools[@]}")
-    fi
-
-    local template_source=$(prompt_for_selection "Use a local template or download a new one?" "Use an existing local template" "Download a new template")
-    if [[ "$template_source" == "Download a new template" ]]; then
-        log "Fetching list of available templates..."
-        mapfile -t remote_templates < <(pveam available --section system | awk 'NR>1 {print $2}')
-        local selected_template_file=$(prompt_for_selection "Select a template to download:" "${remote_templates[@]}")
-        # Start download in background
-        run_with_spinner pveam download "${template_storage}" "${selected_template_file}" &
-    fi
-
     local hostname; while true; do read -p "--> Enter hostname [linux-lxc]: " hostname < /dev/tty; hostname=${hostname:-"linux-lxc"}; if [[ "$hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$ ]]; then break; else warn "Invalid hostname."; fi; done
     local password; while true; do read -s -p "--> Enter root password: " password < /dev/tty; echo; if [[ -n "$password" ]]; then break; else warn "Password cannot be empty."; fi; done
     read -p "--> Enter RAM (MB) [2048]: " memory < /dev/tty; memory=${memory:-2048}
     read -p "--> Enter Cores [2]: " cores < /dev/tty; cores=${cores:-2}
     read -p "--> Enter Disk Size (GB) [10]: " rootfs_size < /dev/tty; rootfs_size=${rootfs_size:-10}
 
-    wait # Wait for any background downloads to complete
-    
-    local os_template
-    if [[ "$template_source" == "Use an existing local template" ]]; then
-        mapfile -t local_templates < <(pvesm list "${template_storage}" --content vztmpl | awk 'NR>1 {print $1}')
-        if [[ ${#local_templates[@]} -eq 0 ]]; then fail "No local templates found."; fi
-        os_template=$(prompt_for_selection "Select a local template:" "${local_templates[@]}")
-    else
-        os_template="${template_storage}:vztmpl/${selected_template_file}"
-    fi
+    # --- Storage & Template Selection ---
+    mapfile -t root_storage_pools < <(pvesm status --content rootdir | awk 'NR>1 {print $1}')
+    local rootfs_storage; if [[ ${#root_storage_pools[@]} -eq 1 ]]; then rootfs_storage=${root_storage_pools[0]}; log "Auto-selected disk storage: ${rootfs_storage}"; else rootfs_storage=$(prompt_for_selection "Select storage for the Container Disk:" "${root_storage_pools[@]}"); fi
+    mapfile -t tmpl_storage_pools < <(pvesm status --content vztmpl | awk 'NR>1 {print $1}')
+    local template_storage; if [[ ${#tmpl_storage_pools[@]} -eq 1 ]]; then template_storage=${tmpl_storage_pools[0]}; log "Auto-selected template storage: ${template_storage}"; else template_storage=$(prompt_for_selection "Select storage for Templates:" "${tmpl_storage_pools[@]}"); fi
 
+    local os_template
+    local template_source=$(prompt_for_selection "Use a local template or download a new one?" "Use an existing local template" "Download a new template")
+    case $template_source in
+        "Use an existing local template")
+            mapfile -t local_templates < <(pvesm list "${template_storage}" --content vztmpl | awk 'NR>1 {print $1}')
+            if [[ ${#local_templates[@]} -eq 0 ]]; then fail "No local templates found."; fi
+            os_template=$(prompt_for_selection "Select a local template:" "${local_templates[@]}")
+            ;;
+        "Download a new template")
+            log "Fetching list of available templates..."
+            mapfile -t remote_templates < <(pveam available --section system | awk 'NR>1 {print $2}')
+            local selected_template_file=$(prompt_for_selection "Select a template to download:" "${remote_templates[@]}")
+            run_with_spinner "Downloading ${selected_template_file}" pveam download "${template_storage}" "${selected_template_file}"
+            os_template="${template_storage}:vztmpl/${selected_template_file}"
+            ;;
+    esac
+    
     # --- Create, Configure, and Finalize ---
     log "Using template: ${os_template}"
-    log "Creating LXC container '${hostname}' (ID: ${ctid})..."
-    pct create "${ctid}" "${os_template}" --hostname "${hostname}" --password "${password}" --memory "${memory}" --cores "${cores}" --net0 name=eth0,bridge=vmbr0,ip=dhcp --storage "${rootfs_storage}" --rootfs "${rootfs_storage}:${rootfs_size}" --onboot 1 --start 0 || fail "pct create failed."
+    run_with_spinner "Creating LXC container '${hostname}' (ID: ${ctid})" \
+        pct create "${ctid}" "${os_template}" --hostname "${hostname}" --password "${password}" --memory "${memory}" --cores "${cores}" --net0 name=eth0,bridge=vmbr0,ip=dhcp --storage "${rootfs_storage}" --rootfs "${rootfs_storage}:${rootfs_size}" --onboot 1 --start 0
 
-    log "Configuring LXC..."
-    pct set ${ctid} --features nesting=1,keyctl=1
-    pct set ${ctid} --nameserver 8.8.8.8
+    run_with_spinner "Configuring LXC" \
+        pct set ${ctid} --features nesting=1,keyctl=1 --nameserver 8.8.8.8
     
-    log "Starting container and waiting for network..."
-    pct start ${ctid}
-    sleep 5
-    run_with_spinner pct exec "${ctid}" -- bash -c "until ping -c1 8.8.8.8 &>/dev/null; do sleep 1; done"
-    log "Network is online."
+    run_with_spinner "Starting container" pct start ${ctid}
+    
+    sleep 2 # Brief pause before hammering the container with checks
+    run_with_spinner "Waiting for network" \
+        pct exec "${ctid}" -- bash -c "until ping -c1 8.8.8.8 &>/dev/null; do sleep 1; done"
 
-    log "Priming container with curl..."
-    run_with_spinner pct exec ${ctid} -- bash -c "apt-get update && apt-get install -y curl"
-    log "Priming complete."
+    run_with_spinner "Priming container with curl" \
+        pct exec ${ctid} -- bash -c "apt-get update && apt-get install -y curl"
     
     # --- Final Output ---
     local container_ip=$(pct exec ${ctid} -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
@@ -140,15 +127,12 @@ main() {
     echo
     log "Choose a configuration script to run from the options below:"
     
-    local gh_user=$(echo "$1" | cut -d/ -f4)
-    local gh_repo=$(echo "$1" | cut -d/ -f5)
+    local gh_user=$(echo "$1" | cut -d/ -f4); local gh_repo=$(echo "$1" | cut -d/ -f5)
     
     echo -e "\n\e[1;37m# To install the Web Desktop:\e[0m"
     echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop.sh | bash\"\e[0m"
     echo
 }
 
-if [ -z "$1" ]; then
-    fail "This script must be executed by launcher.sh, not run directly."
-fi
+if [ -z "$1" ]; then fail "This script must be executed by launcher.sh."; fi
 main "$1"
