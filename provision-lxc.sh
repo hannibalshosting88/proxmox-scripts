@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Proxmox LXC Provisioning Script
-# Version: 39 (Universal Network Check)
+# Version: 40 (Final - Hardcoded URL)
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -22,37 +22,23 @@ run_with_spinner() {
     local message=$1; shift
     local command_to_run=("$@")
     local spinner_chars="/-\|"
-    
     echo -ne "\e[1;33m[WORKING]\e[0m ${message} " >&2
-    
     local temp_log=$(mktemp)
     "${command_to_run[@]}" &> "$temp_log" &
     local pid=$!
-    
-    while kill -0 $pid 2>/dev/null; do
-        for (( i=0; i<${#spinner_chars}; i++ )); do
-            echo -ne "\e[1;33m${spinner_chars:$i:1}\e[0m\r\e[1;33m[WORKING]\e[0m ${message} " >&2
-            sleep 0.1
-        done
-    done
-    
+    while kill -0 $pid 2>/dev/null; do for c in ${spinner_chars}; do echo -ne "\e[1;33m${c}\e[0m\r\e[1;33m[WORKING]\e[0m ${message} " >&2; sleep 0.1; done; done
     echo -ne "\033[2K\r" >&2
-    
     local exit_code=0
     wait $pid || exit_code=$?
-    
-    if [ $exit_code -ne 0 ]; then
-        fail "Task '${message}' failed with exit code ${exit_code}."
-    fi
+    if [ $exit_code -ne 0 ]; then fail "Task '${message}' failed. Log:\n$(cat $temp_log)"; fi
+    rm -f "$temp_log"
     log "Task '${message}' complete."
 }
 
 find_next_id() {
     log "Searching for the first available LXC/VM ID..."
     local id=100
-    while pct status "$id" &>/dev/null || qm status "$id" &>/dev/null; do
-        ((id++))
-    done
+    while pct status "$id" &>/dev/null || qm status "$id" &>/dev/null; do ((id++)); done
     log "First available ID is ${id}"
     echo "$id"
 }
@@ -68,9 +54,9 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v39)..."
+    log "Starting Generic LXC Provisioning (v40)..."
 
-    # --- User Input & Configuration ---
+    # --- Configuration ---
     local ctid=$(find_next_id)
     local hostname; while true; do read -p "--> Enter hostname [linux-lxc]: " hostname < /dev/tty; hostname=${hostname:-"linux-lxc"}; if [[ "$hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$ ]]; then break; else warn "Invalid hostname."; fi; done
     local password; while true; do read -s -p "--> Enter root password: " password < /dev/tty; echo; if [[ -n "$password" ]]; then break; else warn "Password cannot be empty."; fi; done
@@ -101,21 +87,25 @@ main() {
     
     # --- Create, Configure, and Finalize ---
     log "Using template: ${os_template}"
-    run_with_spinner "Creating LXC container '${hostname}' (ID: ${ctid})" \
-        pct create "${ctid}" "${os_template}" --hostname "${hostname}" --password "${password}" --memory "${memory}" --cores "${cores}" --net0 name=eth0,bridge=vmbr0,ip=dhcp --storage "${rootfs_storage}" --rootfs "${rootfs_storage}:${rootfs_size}" --onboot 1 --start 0
+    run_with_spinner "Creating LXC container '${hostname}' (ID: ${ctid})" pct create "${ctid}" "${os_template}" --hostname "${hostname}" --password "${password}" --memory "${memory}" --cores "${cores}" --net0 name=eth0,bridge=vmbr0,ip=dhcp --storage "${rootfs_storage}" --rootfs "${rootfs_storage}:${rootfs_size}" --onboot 1 --start 0
 
-    run_with_spinner "Configuring LXC" \
-        pct set ${ctid} --features nesting=1,keyctl=1 --nameserver 8.8.8.8
-    
+    run_with_spinner "Configuring LXC" pct set ${ctid} --features nesting=1,keyctl=1 --nameserver 8.8.8.8
     run_with_spinner "Starting container" pct start ${ctid}
     
     sleep 2
-    # MODIFICATION: Use a universal, dependency-free network check.
-    run_with_spinner "Waiting for network" \
-        pct exec "${ctid}" -- bash -c "until bash -c 'echo > /dev/tcp/8.8.8.8/53' &>/dev/null; do sleep 1; done"
+    run_with_spinner "Waiting for network" pct exec "${ctid}" -- bash -c "until bash -c 'echo > /dev/tcp/8.8.8.8/53' &>/dev/null; do sleep 1; done"
 
-    run_with_spinner "Priming container with curl" \
-        pct exec ${ctid} -- bash -c "apt-get update && apt-get install -y curl"
+    # Determine OS Family for package manager
+    local os_family="debian" # Default
+    if echo "${os_template}" | grep -q "alpine"; then os_family="alpine"; fi
+    
+    local prime_cmd
+    if [[ "$os_family" == "alpine" ]]; then
+        prime_cmd="apk update && apk add curl"
+    else
+        prime_cmd="apt-get update && apt-get install -y curl"
+    fi
+    run_with_spinner "Priming container with curl" pct exec ${ctid} -- bash -c "$prime_cmd"
     
     # --- Final Output ---
     local container_ip=$(pct exec ${ctid} -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
@@ -125,12 +115,14 @@ main() {
     echo
     log "Choose a configuration script to run from the options below:"
     
-    local gh_user=$(echo "$1" | cut -d/ -f4); local gh_repo=$(echo "$1" | cut -d/ -f5)
+    local gh_user="hannibalshosting88"
+    local gh_repo="proxmox-scripts"
     
     echo -e "\n\e[1;37m# To install the Web Desktop:\e[0m"
     echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop.sh | bash\"\e[0m"
     echo
 }
 
-if [ -z "$1" ]; then fail "This script must be executed by launcher.sh."; fi
+# This script no longer needs the launcher URL argument, but the check remains for structure.
+if [ -z "$1" ]; then fail "This script should be executed by launcher.sh."; fi
 main "$1"
