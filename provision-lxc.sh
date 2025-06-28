@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Proxmox LXC Provisioning Script
-# Version: 1.0 (Production Release)
+# Version: 1.1 (Final Release)
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -39,7 +39,7 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v1.0)..."
+    log "Starting Generic LXC Provisioning (v1.1)..."
 
     # --- Configuration with Input Validation ---
     local ctid=$(find_next_id)
@@ -120,7 +120,7 @@ main() {
     log "Starting container..."
     pct start ${ctid}
     
-    # --- Final Output (Instructions First) ---
+    # --- Final Output ---
     sleep 5 
     local container_ip=$(pct exec ${ctid} -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' || echo "IP_NOT_YET_AVAILABLE")
     echo
@@ -129,9 +129,9 @@ main() {
     echo
     log "Choose a configuration script to run from the options below:"
     
-    # MODIFICATION: Dynamically parse GitHub user/repo from launcher URL ($1)
-    local gh_user=$(echo "$1" | grep -oP '(?<=github.com/)[^/]+')
-    local gh_repo=$(echo "$1" | grep -oP "(?<=${gh_user}/)[^/]+")
+    # BUG FIX: Use 'cut' instead of 'grep -P' for maximum portability.
+    local gh_user=$(echo "$1" | cut -d/ -f4)
+    local gh_repo=$(echo "$1" | cut -d/ -f5)
     
     echo -e "\n\e[1;37m# To install the Web Desktop:\e[0m"
     echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop.sh | bash\"\e[0m"
@@ -149,7 +149,6 @@ main() {
         sleep 2
     done
 
-    # MODIFICATION: Redirect stderr to /dev/null to silence locale warnings
     pct exec ${ctid} -- bash -c "apt-get update &>/dev/null && apt-get install -y curl &>/dev/null" || warn "Could not pre-install curl."
     log "Priming complete."
 }
