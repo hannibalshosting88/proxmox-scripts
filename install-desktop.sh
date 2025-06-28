@@ -16,7 +16,7 @@ curl -fsSL https://get.docker.com | sh >/dev/null
 echo "--> Docker installed successfully."
 
 echo "--> Deploying LXDE Desktop container..."
-docker run -d -p 6080:80 --name=lxde-desktop dorowu/ubuntu-desktop-lxde-vnc
+docker run -d -p 6080:80 --name=lxde-desktop --security-opt apparmor=unconfined dorowu/ubuntu-desktop-lxde-vnc
 echo "--> Desktop container deployed."
 
 echo "--- Configuration Complete. ---"
