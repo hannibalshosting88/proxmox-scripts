@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Proxmox LXC Provisioning Script
-# Version: 32 (Definitive)
+# Version: 33 (Definitive Polish)
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -39,14 +39,33 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v32)..."
+    log "Starting Generic LXC Provisioning (v33)..."
 
-    # --- Configuration ---
+    # --- Configuration with Input Validation ---
     local ctid=$(find_next_id)
-    read -p "--> Enter a hostname for the new container [linux-lxc]: " hostname < /dev/tty
-    hostname=${hostname:-"linux-lxc"}
-    read -s -p "--> Enter a secure root password for the container: " password < /dev/tty; echo
-    [[ -z "$password" ]] && fail "Password cannot be empty."
+    
+    local hostname
+    while true; do
+        read -p "--> Enter a hostname for the new container [linux-lxc]: " hostname < /dev/tty
+        hostname=${hostname:-"linux-lxc"}
+        # Ensure hostname contains only letters, numbers, and hyphens.
+        if [[ "$hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$ ]]; then
+            break
+        else
+            warn "Invalid hostname. Use only letters, numbers, and hyphens."
+        fi
+    done
+
+    local password
+    while true; do
+        read -s -p "--> Enter a secure root password for the container: " password < /dev/tty; echo
+        if [[ -n "$password" ]]; then
+            break
+        else
+            warn "Password cannot be empty. Please try again."
+        fi
+    done
+
     read -p "--> Enter RAM in MB [2048]: " memory < /dev/tty; memory=${memory:-2048}
     read -p "--> Enter number of CPU cores [2]: " cores < /dev/tty; cores=${cores:-2}
     read -p "--> Enter disk size in GB [10]: " rootfs_size < /dev/tty; rootfs_size=${rootfs_size:-10}
@@ -102,29 +121,42 @@ main() {
     
     log "Starting container..."
     pct start ${ctid}
-    log "Pausing for 5 seconds to allow container to settle..."
-    sleep 5
     
-    log "Waiting for network to become fully operational..."
-    local attempts=0
-    while ! pct exec "${ctid}" -- ping -c 1 -W 2 8.8.8.8 &>/dev/null; do
-        ((attempts++)); if [ "$attempts" -ge 15 ]; then fail "Network did not come online."; fi; sleep 2
-    done
-    log "Network is online."
-
-    log "Priming container by installing curl..."
-    pct exec ${ctid} -- bash -c "apt-get update >/dev/null && apt-get install -y curl >/dev/null" || warn "Could not pre-install curl."
-    
-    # --- Final Output ---
-    local container_ip=$(pct exec ${ctid} -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' || echo "IP_NOT_FOUND")
+    # --- Final Output (Instructions First) ---
+    local container_ip=$(pct exec ${ctid} -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' || echo "IP_NOT_YET_AVAILABLE")
     echo
     log "SUCCESS: Provisioning complete."
     log "Container '${hostname}' (ID: ${ctid}) is running at IP: ${container_ip}"
     echo
-    log "To configure software, use the command template below, passing the IP as an argument:"
-    local gh_user="hannibalshosting88"; local gh_repo="proxmox-scripts"
-    echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/<YOUR-SCRIPT-NAME.sh> | bash -s ${container_ip}\"\e[0m"
+    log "Choose a configuration script to run from the options below:"
+    
+    local gh_user="hannibalshosting88"
+    local gh_repo="proxmox-scripts"
+    
+    echo -e "\n\e[1;37m# For a Web Desktop:\e[0m"
+    echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop.sh | bash -s ${container_ip}\"\e[0m"
+    
+    # --- Add more hardcoded options here in the future ---
+    # echo -e "\n\e[1;37m# For Plex Media Server:\e[0m"
+    # echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-plex.sh | bash -s ${container_ip}\"\e[0m"
+    
     echo
+    
+    # --- Best-Effort Finalization ---
+    log "Attempting to prime container in the background..."
+    sleep 5
+    
+    local attempts=0
+    while ! pct exec "${ctid}" -- ping -c 1 -W 2 8.8.8.8 &>/dev/null; do
+        ((attempts++)); if [ "$attempts" -ge 15 ]; then
+            warn "Network check timed out. You may need to wait a moment before running the next command."
+            exit 0
+        fi
+        sleep 2
+    done
+
+    pct exec ${ctid} -- bash -c "apt-get update >/dev/null && apt-get install -y curl >/dev/null" || warn "Could not pre-install curl."
+    log "Priming complete."
 }
 
 main "$@"
