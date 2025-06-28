@@ -1,0 +1,16 @@
+# This is a comment, it will be ignored
+
+# Ignore a specific file by name
+notes.txt
+
+# Ignore all files with a specific extension, like log files
+*.log
+
+# Ignore an entire directory and everything inside it
+config/
+
+# Ignore a common folder like node_modules
+node_modules/
+
+# Ignore misnomer token files
+honeypot.txt
