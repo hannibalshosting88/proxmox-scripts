@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Proxmox LXC Provisioning Script
-# Version: 27 (Generic Refactor)
+# Version: 28 (Final Syntax Fix)
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -28,62 +28,79 @@ find_next_id() {
     echo "$id"
 }
 
+# BUG FIX: Renamed custom function from 'select' to 'prompt_for_selection'
+# to avoid conflict with the Bash 'select' reserved keyword.
+prompt_for_selection() {
+    local prompt_message=$1
+    shift
+    local options=("$@")
+    
+    log "${prompt_message}"
+    select item in "${options[@]}"; do
+        if [[ -n "$item" ]]; then
+            echo "$item"
+            break
+        else
+            warn "Invalid selection. Please try again."
+        fi
+    done < /dev/tty
+}
+
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v27)..."
+    log "Starting Generic LXC Provisioning (v28)..."
 
     # --- Configuration ---
     local ctid=$(find_next_id)
-    read -p "--> Enter a hostname for the new container [linux-lxc]: " hostname < /dev/tty
-    hostname=${hostname:-"linux-lxc"}
+    read -p "--> Enter a hostname for the new container [linux-desktop]: " hostname < /dev/tty
+    hostname=${hostname:-"linux-desktop"}
     read -s -p "--> Enter a secure root password for the container: " password < /dev/tty; echo
     [[ -z "$password" ]] && fail "Password cannot be empty."
     read -p "--> Enter RAM in MB [2048]: " memory < /dev/tty; memory=${memory:-2048}
     read -p "--> Enter number of CPU cores [2]: " cores < /dev/tty; cores=${cores:-2}
     read -p "--> Enter disk size in GB [10]: " rootfs_size < /dev/tty; rootfs_size=${rootfs_size:-10}
 
-    # --- Storage Selection (with auto-selection) ---
+    # --- Storage Selection ---
     mapfile -t root_storage_pools < <(pvesm status --content rootdir | awk 'NR>1 {print $1}')
     if [[ ${#root_storage_pools[@]} -eq 0 ]]; then fail "No storage for Container Disks found."; fi
+    local rootfs_storage
     if [[ ${#root_storage_pools[@]} -eq 1 ]]; then
-        local rootfs_storage=${root_storage_pools[0]}
+        rootfs_storage=${root_storage_pools[0]}
         log "Auto-selected single available disk storage: ${rootfs_storage}"
     else
-        local rootfs_storage=$(select -p "Select storage for the Container Disk:" "${root_storage_pools[@]}")
+        rootfs_storage=$(prompt_for_selection "Select storage for the Container Disk:" "${root_storage_pools[@]}")
     fi
 
     mapfile -t tmpl_storage_pools < <(pvesm status --content vztmpl | awk 'NR>1 {print $1}')
     if [[ ${#tmpl_storage_pools[@]} -eq 0 ]]; then fail "No storage for Templates found."; fi
+    local template_storage
     if [[ ${#tmpl_storage_pools[@]} -eq 1 ]]; then
-        local template_storage=${tmpl_storage_pools[0]}
+        template_storage=${tmpl_storage_pools[0]}
         log "Auto-selected single available template storage: ${template_storage}"
     else
-        local template_storage=$(select -p "Select storage for Templates:" "${tmpl_storage_pools[@]}")
+        template_storage=$(prompt_for_selection "Select storage for Templates:" "${tmpl_storage_pools[@]}")
     fi
 
-    # --- Template Selection (with Local/Download choice) ---
+    # --- Template Selection ---
     local os_template
-    log "Use a local template or download a new one?"
-    select template_source in "Use an existing local template" "Download a new template"; do
-        case $template_source in
-            "Use an existing local template")
-                mapfile -t local_templates < <(pvesm list "${template_storage}" --content vztmpl | awk 'NR>1 {print $1}')
-                if [[ ${#local_templates[@]} -eq 0 ]]; then fail "No local templates found on '${template_storage}'."; fi
-                os_template=$(select -p "Select a local template:" "${local_templates[@]}")
-                break
-                ;;
-            "Download a new template")
-                log "Fetching list of available templates..."
-                mapfile -t remote_templates < <(pveam available --section system | awk 'NR>1 {print $2}')
-                local selected_template_file=$(select -p "Select a template to download:" "${remote_templates[@]}")
-                log "Downloading ${selected_template_file} to '${template_storage}'..."
-                pveam download "${template_storage}" "${selected_template_file}" || fail "Template download failed."
-                os_template="${template_storage}:vztmpl/${selected_template_file}"
-                break
-                ;;
-        esac
-    done < /dev/tty
+    local template_source=$(prompt_for_selection "Use a local template or download a new one?" "Use an existing local template" "Download a new template")
+    
+    case $template_source in
+        "Use an existing local template")
+            mapfile -t local_templates < <(pvesm list "${template_storage}" --content vztmpl | awk 'NR>1 {print $1}')
+            if [[ ${#local_templates[@]} -eq 0 ]]; then fail "No local templates found on '${template_storage}'."; fi
+            os_template=$(prompt_for_selection "Select a local template:" "${local_templates[@]}")
+            ;;
+        "Download a new template")
+            log "Fetching list of available templates..."
+            mapfile -t remote_templates < <(pveam available --section system | awk 'NR>1 {print $2}')
+            local selected_template_file=$(prompt_for_selection "Select a template to download:" "${remote_templates[@]}")
+            log "Downloading ${selected_template_file} to '${template_storage}'..."
+            pveam download "${template_storage}" "${selected_template_file}" || fail "Template download failed."
+            os_template="${template_storage}:vztmpl/${selected_template_file}"
+            ;;
+    esac
     log "Using template: ${os_template}"
 
     # --- Create, Configure, and Start ---
@@ -110,7 +127,6 @@ main() {
 
     # --- Handoff to Phase 2 ---
     log "Handing off to configuration script..."
-    # BUG FIX: Parse the URL from the first argument ($1), not this script's name ($0)
     local gh_user=$(echo "$1" | grep -oP '(?<=github.com/)[^/]+')
     local gh_repo=$(echo "$1" | grep -oP "(?<=${gh_user}/)[^/]+")
     local config_url="https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/configure-lxc.sh"
@@ -120,8 +136,8 @@ main() {
     log "All phases complete."
 }
 
-# Simplified select and read functions for this script's specific needs
-select() { local prompt; prompt=$1; shift; PS3="${prompt} > "; select item; do [[ -n "$item" ]] && echo "$item" && break; done < /dev/tty; }
-read() { builtin read "$@"; }
-
-main "$@"
+# The first argument to the script is the launcher URL, passed from launcher.sh
+if [ -z "$1" ]; then
+    fail "This script must be executed by launcher.sh, not run directly."
+fi
+main "$1"
