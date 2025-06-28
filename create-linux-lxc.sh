@@ -104,10 +104,11 @@ main() {
     log "Using template: ${os_template}"
 
     # --- Create, Configure, and Start ---
+    # This block has the CORRECT --rootfs syntax for ZFS
     log "Creating LXC container '${hostname}' (ID: ${ctid})..."
     pct create "${ctid}" "${os_template}" --hostname "${hostname}" --password "${password}" \
         --memory "${memory}" --cores "${cores}" --net0 name=eth0,bridge=vmbr0,ip=dhcp \
-        --storage "${rootfs_storage}" --rootfs "${rootfs_storage},size=${rootfs_size}G" --onboot 1 --start 0 || fail "pct create failed."
+        --storage "${rootfs_storage}" --rootfs "${rootfs_storage}:${rootfs_size}" --onboot 1 --start 0 || fail "pct create failed." 
 
     log "Configuring LXC for Docker-readiness..."
     pct set ${ctid} --features nesting=1,keyctl=1
