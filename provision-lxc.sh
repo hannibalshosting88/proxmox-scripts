@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Proxmox LXC Provisioning Script
-# Version: 35 (Final Architecture)
+# Version: 1.0 (Production Release)
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -39,7 +39,7 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v35)..."
+    log "Starting Generic LXC Provisioning (v1.0)..."
 
     # --- Configuration with Input Validation ---
     local ctid=$(find_next_id)
@@ -121,7 +121,6 @@ main() {
     pct start ${ctid}
     
     # --- Final Output (Instructions First) ---
-    # Give the container a moment to get an IP before we try to display it.
     sleep 5 
     local container_ip=$(pct exec ${ctid} -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' || echo "IP_NOT_YET_AVAILABLE")
     echo
@@ -130,11 +129,11 @@ main() {
     echo
     log "Choose a configuration script to run from the options below:"
     
-    local gh_user="hannibalshosting88"
-    local gh_repo="proxmox-scripts"
+    # MODIFICATION: Dynamically parse GitHub user/repo from launcher URL ($1)
+    local gh_user=$(echo "$1" | grep -oP '(?<=github.com/)[^/]+')
+    local gh_repo=$(echo "$1" | grep -oP "(?<=${gh_user}/)[^/]+")
     
     echo -e "\n\e[1;37m# To install the Web Desktop:\e[0m"
-    # MODIFICATION: The handoff command is now simpler and more robust.
     echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop.sh | bash\"\e[0m"
     
     echo
@@ -150,8 +149,13 @@ main() {
         sleep 2
     done
 
-    pct exec ${ctid} -- bash -c "apt-get update >/dev/null && apt-get install -y curl >/dev/null" || warn "Could not pre-install curl."
+    # MODIFICATION: Redirect stderr to /dev/null to silence locale warnings
+    pct exec ${ctid} -- bash -c "apt-get update &>/dev/null && apt-get install -y curl &>/dev/null" || warn "Could not pre-install curl."
     log "Priming complete."
 }
 
-main "$@"
+# The first argument to the script is the launcher URL, passed from launcher.sh
+if [ -z "$1" ]; then
+    fail "This script must be executed by launcher.sh, not run directly."
+fi
+main "$1"
