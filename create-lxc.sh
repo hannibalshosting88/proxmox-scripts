@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # All-in-One Proxmox LXC Provisioning Script
-# Version: 1.2 (Final Polish)
+# Version: 1.3 (Production Release w/ Timeouts)
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -22,6 +22,8 @@ run_with_spinner() {
     local message=$1; shift
     local command_to_run=("$@")
     local spinner_chars="/-\|"
+    # MODIFICATION: Add a configurable timeout (in seconds). 600s = 10 minutes.
+    local timeout=600 
     
     echo -ne "\e[1;33m[WORKING]\e[0m ${message} " >&3
     
@@ -29,13 +31,22 @@ run_with_spinner() {
     "${command_to_run[@]}" &> "$temp_log" &
     local pid=$!
     
-    # Corrected spinner animation loop
+    local start_time=$(date +%s)
+    
     while kill -0 $pid 2>/dev/null; do
         for (( i=0; i<${#spinner_chars}; i++ )); do
-            # MODIFICATION: Use 'printf' for maximum portability of escape codes
             printf "\e[1;33m%s\e[0m\r\e[1;33m[WORKING]\e[0m %s " "${spinner_chars:$i:1}" "${message}" >&3
             sleep 0.1
         done
+        
+        # NEW: Timeout Check
+        local current_time=$(date +%s)
+        if (( current_time - start_time > timeout )); then
+            warn "Task timed out after ${timeout} seconds."
+            # Attempt to kill the hung process
+            kill $pid 2>/dev/null || true
+            fail "Operation timed out."
+        fi
     done
     
     echo -ne "\033[2K\r" >&3
@@ -70,7 +81,7 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v1.2)..."
+    log "Starting Generic LXC Provisioning (v1.3)..."
 
     local ctid=$(find_next_id)
     local hostname; while true; do read -p "--> Enter hostname [linux-lxc]: " hostname < /dev/tty; hostname=${hostname:-"linux-lxc"}; if [[ "$hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$ ]]; then break; else warn "Invalid hostname."; fi; done
