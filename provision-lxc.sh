@@ -1,7 +1,9 @@
 #!/bin/bash
 #
 # Proxmox LXC Provisioning Script
-# Version: 29 (Two-Command Architecture)
+# Version: 30 (Definitive)
+# - Pre-installs curl in the new container.
+# - Provides a generic command template as its final output.
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -39,7 +41,7 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v29)..."
+    log "Starting Generic LXC Provisioning (v30)..."
 
     # --- Configuration ---
     local ctid=$(find_next_id)
@@ -102,15 +104,30 @@ main() {
     
     log "Starting container..."
     pct start ${ctid}
+    log "Pausing for 5 seconds to allow container to settle..."
+    sleep 5
+    
+    log "Waiting for network to become fully operational..."
+    local attempts=0
+    while ! pct exec "${ctid}" -- ping -c 1 -W 2 8.8.8.8 &>/dev/null; do
+        ((attempts++)); if [ "$attempts" -ge 15 ]; then fail "Network did not come online."; fi; sleep 2
+    done
+    log "Network is online."
+
+    log "Priming container by installing curl..."
+    pct exec ${ctid} -- bash -c "apt-get update >/dev/null && apt-get install -y curl >/dev/null" || warn "Could not install curl, it may already exist."
     
     # --- Final Output ---
     echo
     log "SUCCESS: Provisioning complete."
     log "Container '${hostname}' (ID: ${ctid}) is running and ready for configuration."
     echo
-    log "To install the Web Desktop, run the following command:"
+    log "To install software, use the following command pattern, replacing the script name as needed:"
     local gh_user="hannibalshosting88"
     local gh_repo="proxmox-scripts"
+    echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/<YOUR-SCRIPT-NAME.sh> | bash\"\e[0m"
+    echo
+    log "For example, to run 'install-desktop.sh', you would use:"
     echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop.sh | bash\"\e[0m"
     echo
 }
