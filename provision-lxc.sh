@@ -1,9 +1,7 @@
 #!/bin/bash
 #
 # Proxmox LXC Provisioning Script
-# Version: 31 (Definitive)
-# - Prints success and next-step instructions immediately after container start
-#   to work around 'curl|bash' execution environment limitations.
+# Version: 32 (Definitive)
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -41,7 +39,7 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v31)..."
+    log "Starting Generic LXC Provisioning (v32)..."
 
     # --- Configuration ---
     local ctid=$(find_next_id)
@@ -98,43 +96,35 @@ main() {
         --memory "${memory}" --cores "${cores}" --net0 name=eth0,bridge=vmbr0,ip=dhcp \
         --storage "${rootfs_storage}" --rootfs "${rootfs_storage}:${rootfs_size}" --onboot 1 --start 0 || fail "pct create failed."
 
-    log "Configuring LXC for Docker-readiness..."
+    log "Configuring LXC..."
     pct set ${ctid} --features nesting=1,keyctl=1
     pct set ${ctid} --nameserver 8.8.8.8
     
     log "Starting container..."
     pct start ${ctid}
-
-    # --- FINAL OUTPUT - MOVED TO RUN BEFORE POTENTIALLY FAILING COMMANDS ---
-    echo
-    log "SUCCESS: Provisioning complete."
-    log "Container '${hostname}' (ID: ${ctid}) is running and ready for configuration."
-    echo
-    log "To install software, use the following command pattern, replacing the script name as needed:"
-    local gh_user="hannibalshosting88"
-    local gh_repo="proxmox-scripts"
-    echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/<YOUR-SCRIPT-NAME.sh> | bash\"\e[0m"
-    echo
-    log "For example, to run 'install-desktop.sh', you would use:"
-    echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop.sh | bash\"\e[0m"
-    echo
-    
-    # --- Best-Effort Finalization ---
-    log "Attempting to prime container with network check and curl installation..."
+    log "Pausing for 5 seconds to allow container to settle..."
     sleep 5
     
+    log "Waiting for network to become fully operational..."
     local attempts=0
     while ! pct exec "${ctid}" -- ping -c 1 -W 2 8.8.8.8 &>/dev/null; do
-        ((attempts++)); if [ "$attempts" -ge 15 ]; then
-            warn "Network check timed out. You may need to wait a moment before running the next command."
-            exit 0 # Exit cleanly, the user already has instructions.
-        fi
-        sleep 2
+        ((attempts++)); if [ "$attempts" -ge 15 ]; then fail "Network did not come online."; fi; sleep 2
     done
-    log "Network is confirmed online."
+    log "Network is online."
 
-    pct exec ${ctid} -- bash -c "apt-get update >/dev/null && apt-get install -y curl >/dev/null" || warn "Could not pre-install curl. You may need to run 'apt-get update && apt-get install curl' manually inside the container."
-    log "Priming complete."
+    log "Priming container by installing curl..."
+    pct exec ${ctid} -- bash -c "apt-get update >/dev/null && apt-get install -y curl >/dev/null" || warn "Could not pre-install curl."
+    
+    # --- Final Output ---
+    local container_ip=$(pct exec ${ctid} -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' || echo "IP_NOT_FOUND")
+    echo
+    log "SUCCESS: Provisioning complete."
+    log "Container '${hostname}' (ID: ${ctid}) is running at IP: ${container_ip}"
+    echo
+    log "To configure software, use the command template below, passing the IP as an argument:"
+    local gh_user="hannibalshosting88"; local gh_repo="proxmox-scripts"
+    echo -e "\e[1;33mpct exec ${ctid} -- bash -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/<YOUR-SCRIPT-NAME.sh> | bash -s ${container_ip}\"\e[0m"
+    echo
 }
 
 main "$@"
