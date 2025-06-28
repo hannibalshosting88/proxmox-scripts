@@ -1,8 +1,7 @@
 #!/bin/bash
 #
 # Proxmox LXC Provisioning Script
-# Version: 38 (Polished UX)
-# - Implements spinners for all long-running tasks.
+# Version: 39 (Universal Network Check)
 
 # --- Global Settings ---
 set -Eeuo pipefail
@@ -26,7 +25,8 @@ run_with_spinner() {
     
     echo -ne "\e[1;33m[WORKING]\e[0m ${message} " >&2
     
-    "${command_to_run[@]}" &>/dev/null &
+    local temp_log=$(mktemp)
+    "${command_to_run[@]}" &> "$temp_log" &
     local pid=$!
     
     while kill -0 $pid 2>/dev/null; do
@@ -36,11 +36,11 @@ run_with_spinner() {
         done
     done
     
+    echo -ne "\033[2K\r" >&2
+    
     local exit_code=0
     wait $pid || exit_code=$?
     
-    echo -ne "\033[2K\r" >&2
-
     if [ $exit_code -ne 0 ]; then
         fail "Task '${message}' failed with exit code ${exit_code}."
     fi
@@ -48,7 +48,6 @@ run_with_spinner() {
 }
 
 find_next_id() {
-    # This is fast, no spinner needed.
     log "Searching for the first available LXC/VM ID..."
     local id=100
     while pct status "$id" &>/dev/null || qm status "$id" &>/dev/null; do
@@ -69,9 +68,9 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v38)..."
+    log "Starting Generic LXC Provisioning (v39)..."
 
-    # --- Configuration ---
+    # --- User Input & Configuration ---
     local ctid=$(find_next_id)
     local hostname; while true; do read -p "--> Enter hostname [linux-lxc]: " hostname < /dev/tty; hostname=${hostname:-"linux-lxc"}; if [[ "$hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$ ]]; then break; else warn "Invalid hostname."; fi; done
     local password; while true; do read -s -p "--> Enter root password: " password < /dev/tty; echo; if [[ -n "$password" ]]; then break; else warn "Password cannot be empty."; fi; done
@@ -79,7 +78,6 @@ main() {
     read -p "--> Enter Cores [2]: " cores < /dev/tty; cores=${cores:-2}
     read -p "--> Enter Disk Size (GB) [10]: " rootfs_size < /dev/tty; rootfs_size=${rootfs_size:-10}
 
-    # --- Storage & Template Selection ---
     mapfile -t root_storage_pools < <(pvesm status --content rootdir | awk 'NR>1 {print $1}')
     local rootfs_storage; if [[ ${#root_storage_pools[@]} -eq 1 ]]; then rootfs_storage=${root_storage_pools[0]}; log "Auto-selected disk storage: ${rootfs_storage}"; else rootfs_storage=$(prompt_for_selection "Select storage for the Container Disk:" "${root_storage_pools[@]}"); fi
     mapfile -t tmpl_storage_pools < <(pvesm status --content vztmpl | awk 'NR>1 {print $1}')
@@ -94,7 +92,6 @@ main() {
             os_template=$(prompt_for_selection "Select a local template:" "${local_templates[@]}")
             ;;
         "Download a new template")
-            log "Fetching list of available templates..."
             mapfile -t remote_templates < <(pveam available --section system | awk 'NR>1 {print $2}')
             local selected_template_file=$(prompt_for_selection "Select a template to download:" "${remote_templates[@]}")
             run_with_spinner "Downloading ${selected_template_file}" pveam download "${template_storage}" "${selected_template_file}"
@@ -112,9 +109,10 @@ main() {
     
     run_with_spinner "Starting container" pct start ${ctid}
     
-    sleep 2 # Brief pause before hammering the container with checks
+    sleep 2
+    # MODIFICATION: Use a universal, dependency-free network check.
     run_with_spinner "Waiting for network" \
-        pct exec "${ctid}" -- bash -c "until ping -c1 8.8.8.8 &>/dev/null; do sleep 1; done"
+        pct exec "${ctid}" -- bash -c "until bash -c 'echo > /dev/tcp/8.8.8.8/53' &>/dev/null; do sleep 1; done"
 
     run_with_spinner "Priming container with curl" \
         pct exec ${ctid} -- bash -c "apt-get update && apt-get install -y curl"
