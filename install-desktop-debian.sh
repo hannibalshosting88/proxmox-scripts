@@ -4,7 +4,6 @@ export DEBIAN_FRONTEND=noninteractive
 
 # --- Helper Functions ---
 log() {
-    # POSIX-compliant color codes
     GREEN='\033[0;32m'
     NC='\033[0m' # No Color
     printf "${GREEN}[INFO]${NC} ===> %s\n" "$1" >&2
@@ -19,15 +18,13 @@ fail() {
 
 run_with_spinner() {
     _message=$1; shift
-    _command="$@"
+    # "$@" now holds the command and all its arguments separately
     _spinner_chars="/-\|"
     _i=1
 
-    # Start the spinner in the background
     (
         while true; do
             _char=$(expr substr "$_spinner_chars" $_i 1)
-            # POSIX-compliant color codes for spinner
             YELLOW='\033[1;33m'
             NC='\033[0m'
             printf "${YELLOW}[WORKING]${NC} %s %s\r" "$_char" "$_message" >&2
@@ -40,27 +37,27 @@ run_with_spinner() {
     ) &
     _spinner_pid=$!
 
-    # Run the actual command, redirecting its output to a temp file
     _temp_log=$(mktemp)
-    if ! sh -c "$_command" >"$_temp_log" 2>&1; then
+    
+    # --- THIS IS THE FIX ---
+    # Execute "$@" directly instead of using a new subshell (sh -c).
+    # This ensures that functions defined in the script are visible.
+    if ! "$@" >"$_temp_log" 2>&1; then
         kill $_spinner_pid
-        # Clear the spinner line before printing error
         printf "\033[2K\r" >&2
         fail "Task '$_message' failed. Log:\n$(cat "$_temp_log")"
         rm -f "$_temp_log"
     fi
 
-    # Stop the spinner and clean up
     kill $_spinner_pid
-    wait $_spinner_pid 2>/dev/null || true # Suppress "Terminated" message
+    wait $_spinner_pid 2>/dev/null || true
     rm -f "$_temp_log"
 
-    # Clear the spinner line and print the final "complete" message
     printf "\033[2K\r" >&2
     log "Task '$_message' complete."
 }
 
-# --- Task-Specific Functions for Spinner ---
+# --- Task-Specific Functions for Spinner (Unchanged) ---
 
 configure_locales() {
     if ! command -v locale-gen >/dev/null; then
@@ -87,10 +84,12 @@ setup_docker_repo() {
 
 log "Starting Debian/Ubuntu Desktop Installer..."
 
+# --- THIS IS THE OTHER PART OF THE FIX ---
+# Commands are now passed without being quoted into a single string.
 run_with_spinner "Configuring locales" configure_locales
 run_with_spinner "Setting up Docker repository" setup_docker_repo
-run_with_spinner "Installing Docker Engine" "apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
-run_with_spinner "Deploying LXDE Desktop" "docker run -d -p 6080:80 --name=lxde-desktop --security-opt apparmor=unconfined dorowu/ubuntu-desktop-lxde-vnc"
+run_with_spinner "Installing Docker Engine" apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+run_with_spinner "Deploying LXDE Desktop" docker run -d -p 6080:80 --name=lxde-desktop --security-opt apparmor=unconfined dorowu/ubuntu-desktop-lxde-vnc
 
 log "Debian/Ubuntu Desktop Setup Complete"
 IP_ADDRESS=$(ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
