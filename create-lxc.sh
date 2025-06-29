@@ -101,8 +101,12 @@ main() {
     
     log "Using template: ${os_template}"
     
-    # --- THIS IS THE KEY CHANGE: --unprivileged 0 ---
-    run_with_spinner "Creating LXC container '${hostname}' (ID: ${ctid})" pct create "${ctid}" "${os_template}" --hostname "${hostname}" --password "${password}" --memory "${memory}" --cores "${cores}" --net0 name=eth0,bridge=vmbr0,ip=dhcp --storage "${rootfs_storage}" --rootfs "${rootfs_storage}:${rootfs_size}" --onboot 1 --start 0 --unprivileged 0
+    # 1. CREATE the container normally (flag removed)
+    run_with_spinner "Creating LXC container '${hostname}' (ID: ${ctid})" pct create "${ctid}" "${os_template}" --hostname "${hostname}" --password "${password}" --memory "${memory}" --cores "${cores}" --net0 name=eth0,bridge=vmbr0,ip=dhcp --storage "${rootfs_storage}" --rootfs "${rootfs_storage}:${rootfs_size}" --onboot 1 --start 0
+
+    # 2. SET the container to privileged mode separately
+    log "Setting container to privileged mode..."
+    pct set "${ctid}" --unprivileged 0
 
     log "Configuring LXC for Docker readiness..."
     pct set "${ctid}" --features nesting=1,keyctl=1 --nameserver 8.8.8.8
