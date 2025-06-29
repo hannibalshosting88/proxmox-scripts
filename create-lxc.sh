@@ -91,26 +91,22 @@ main() {
     run_with_spinner "Configuring LXC" pct set ${ctid} --features nesting=1,keyctl=1 --nameserver 8.8.8.8
     run_with_spinner "Starting container" pct start ${ctid}
     
-    # --- Final Output (Instructions First) ---
-    sleep 5 # Give container a moment to get an IP
-    local container_ip=$(pct exec ${ctid} -- sh -c "ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}'" || echo "IP_NOT_YET_AVAILABLE")
-    echo >&3
-    log "SUCCESS: Provisioning complete."
-    log "Container '${hostname}' (ID: ${ctid}) is running. IP Address: ${container_ip}"
-    echo >&3
-    log "To install software, run this command:"
-    
-    local gh_user="hannibalshosting88"; local gh_repo="proxmox-scripts"
-    echo -e "\e[1;33mpct exec ${ctid} -- sh -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop.sh | sh\"\e[0m" >&3
-    echo >&3
-    
-    # --- Best-Effort Priming ---
-    log "Attempting to prime container in the background..."
-    local os_family="debian"; if echo "${os_template}" | grep -q "alpine"; then os_family="alpine"; fi
-    local prime_cmd; if [[ "$os_family" == "alpine" ]]; then prime_cmd="apk update && apk add curl"; else prime_cmd="apt-get update && apt-get install -y curl"; fi
-    # This last command may not complete in a curl|bash session, but it is not critical.
-    pct exec ${ctid} -- sh -c "$prime_cmd" &>/dev/null || warn "Container priming may not have completed."
-    log "Script finished."
-}
+    # --- Final Output ---
+local container_ip=$(pct exec ${ctid} -- sh -c "ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}'")
+local os_family="debian"; if echo "${os_template}" | grep -q "alpine"; then os_family="alpine"; fi
+local gh_user="hannibalshosting88"; local gh_repo="proxmox-scripts"
+
+echo; log "SUCCESS: PROVISIONING COMPLETE."
+log "Container '${hostname}' (ID: ${ctid}) is running at IP: ${container_ip}"
+echo; log "Detected OS Family: ${os_family}. Run the appropriate command below:"
+
+if [[ "$os_family" == "alpine" ]]; then
+    echo -e "\n\e[1;37m# For your ALPINE container, run:\e[0m"
+    echo -e "\e[1;33mpct exec ${ctid} -- sh -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop-alpine.sh | sh\"\e[0m"
+else
+    echo -e "\n\e[1;37m# For your DEBIAN/UBUNTU container, run:\e[0m"
+    echo -e "\e[1;33mpct exec ${ctid} -- sh -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop-debian.sh | sh\"\e[0m"
+fi
+echo
 
 main
