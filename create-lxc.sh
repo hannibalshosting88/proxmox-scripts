@@ -154,5 +154,5 @@ main() {
         echo -e "\n\e[1;37m# For your DEBIAN/UBUNTU container, run:\e[0m" >&3
         echo -e "\e[1;33mpct exec ${ctid} -- sh -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop-debian.sh | bash\"\e[0m\n" >&3
     fi
-}
+
 main
