@@ -2,55 +2,48 @@
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
-# --- Helper Functions (using bash features) ---
-log() {
-    echo -e "\e[32m[INFO]\e[0m ===> $1" >&2
-}
-
-fail() {
-    echo -e "\e[31m[FAIL]\e[0m ==> $1" >&2
-    exit 1
-}
-
+# This function is the core of the fix. It handles output atomically.
 run_with_spinner() {
     local message=$1; shift
-    # The rest of the arguments are the command to run
     local command_to_run=("$@")
-    local spinner_chars="/-\|"
-    
-    # Start spinner in the background
-    (
+
+    # Define the spinner animation function locally
+    spinner() {
+        local chars="/-\|"
         while true; do
-            for (( i=0; i<${#spinner_chars}; i++ )); do
-                echo -ne "\e[1;33m[WORKING]\e[0m \e[1;33m${spinner_chars:$i:1}\e[0m ${message}\r" >&2
+            for (( i=0; i<${#chars}; i++ )); do
+                printf "\e[1;33m[WORKING]\e[0m %s %s\r" "${chars:$i:1}" "$message" >&2
                 sleep 0.1
             done
         done
-    ) &
+    }
+
+    spinner &
     local spinner_pid=$!
 
-    # Run the actual command, capturing output
+    # Capture the exit code of the command
     local temp_log
     temp_log=$(mktemp)
-    
-    # Execute command directly; bash handles functions correctly.
-    if ! "${command_to_run[@]}" > "$temp_log" 2>&1; then
-        kill "$spinner_pid"
-        echo -ne "\033[2K\r" >&2
-        fail "Task '${message}' failed. Log:\n$(cat "$temp_log")"
-        rm -f "$temp_log"
-    fi
+    "${command_to_run[@]}" >"$temp_log" 2>&1
+    local exit_code=$?
 
-    # Stop spinner and clean up
-    kill "$spinner_pid"
+    # Stop the spinner cleanly
+    kill "$spinner_pid" &>/dev/null
     wait "$spinner_pid" &>/dev/null
+
+    # Atomically clear the line and print the final status
+    if [ $exit_code -eq 0 ]; then
+        printf "\r\033[2K\e[32m[INFO]\e[0m ===> Task '%s' complete.\n" "$message" >&2
+    else
+        printf "\r\033[2K\e[31m[FAIL]\e[0m ==> Task '%s' failed. Log:\n" "$message" >&2
+        cat "$temp_log" >&2
+        rm -f "$temp_log"
+        exit 1
+    fi
     rm -f "$temp_log"
-    
-    echo -ne "\033[2K\r" >&2
-    log "Task '${message}' complete."
 }
 
-# --- Task-Specific Functions ---
+# --- Task-Specific Functions (Unchanged) ---
 configure_locales() {
     if ! command -v locale-gen >/dev/null; then
         apt-get update
@@ -73,13 +66,13 @@ setup_docker_repo() {
 }
 
 # --- Main Execution ---
-log "Starting Debian/Ubuntu Desktop Installer..."
+echo -e "\e[32m[INFO]\e[0m ===> Starting Debian/Ubuntu Desktop Installer..."
 
 run_with_spinner "Configuring locales" configure_locales
 run_with_spinner "Setting up Docker repository" setup_docker_repo
 run_with_spinner "Installing Docker Engine" apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 run_with_spinner "Deploying LXDE Desktop" docker run -d -p 6080:80 --name=lxde-desktop --security-opt apparmor=unconfined dorowu/ubuntu-desktop-lxde-vnc
 
-log "Debian/Ubuntu Desktop Setup Complete"
+echo -e "\e[32m[INFO]\e[0m ===> --- Debian/Ubuntu Desktop Setup Complete ---"
 IP_ADDRESS=$(ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
 echo "Access at: http://${IP_ADDRESS}:6080"
