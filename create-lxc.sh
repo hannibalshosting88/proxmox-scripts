@@ -132,14 +132,13 @@ main() {
         log "Priming Alpine container with curl..."
         pct exec "${ctid}" -- sh -c "apk update && apk add curl"
         log "Priming complete."
-        # Prime container with necessary tools and configs
-        if [[ "$os_family" == "alpine" ]]; then
-            run_with_spinner "Priming Alpine container with curl" pct exec "${ctid}" -- sh -c "apk update && apk add curl"
-        else
-            # THIS IS THE FIX: Ensure apt-get is non-interactive to prevent hangs
-            run_with_spinner "Priming Debian/Ubuntu container (locales, curl)" pct exec "${ctid}" -- sh -c "export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install -y locales curl && locale-gen en_US.UTF-8"
-        fi
-    
+    else
+        log "Priming Debian/Ubuntu container (locales, curl)..."
+        # We also remove the spinner from the Debian command for consistency and reliability
+        pct exec "${ctid}" -- sh -c "export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install -y locales curl && locale-gen en_US.UTF-8"
+        log "Priming complete."
+    fi
+            
     local container_ip
     container_ip=$(pct exec "${ctid}" -- sh -c "ip addr show eth0 | grep 'inet ' | awk '{print \$2}' | cut -d'/' -f1")
     local gh_user="hannibalshosting88"; local gh_repo="proxmox-scripts"
