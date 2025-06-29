@@ -108,9 +108,16 @@ main() {
     local os_family="debian"; if echo "${os_template}" | grep -q "alpine"; then os_family="alpine"; fi
     
     # Apply OS-specific configurations
+    # FIXED: Appends directly to the config file for compatibility
     if [[ "$os_family" == "alpine" ]]; then
-        pct set "${ctid}" --aa_profile unconfined
-        log "Applied unconfined AppArmor profile for Alpine."
+        local config_file="/etc/pve/lxc/${ctid}.conf"
+        if grep -q "lxc.apparmor.profile" "$config_file"; then
+            sed -i "s|^lxc.apparmor.profile.*|lxc.apparmor.profile: unconfined|" "$config_file"
+            log "Updated existing AppArmor profile to unconfined."
+        else
+            echo "lxc.apparmor.profile: unconfined" >> "$config_file"
+            log "Set AppArmor profile to unconfined for Alpine."
+        fi
     fi
 
     run_with_spinner "Starting container" pct start "${ctid}"
