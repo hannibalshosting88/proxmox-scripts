@@ -1,6 +1,6 @@
 # ==============================================================================
 # FILENAME: create-lxc.sh
-# VERSION: 2.4 (Production Release)
+# VERSION: 2.6 (Production Release)
 # ==============================================================================
 #!/bin/bash
 
@@ -70,7 +70,7 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v2.4)..."
+    log "Starting Generic LXC Provisioning (v2.6)..."
 
     local ctid
     ctid=$(find_next_id)
@@ -100,15 +100,17 @@ main() {
     fi
     
     log "Using template: ${os_template}"
-    run_with_spinner "Creating LXC container '${hostname}' (ID: ${ctid})" pct create "${ctid}" "${os_template}" --hostname "${hostname}" --password "${password}" --memory "${memory}" --cores "${cores}" --net0 name=eth0,bridge=vmbr0,ip=dhcp --storage "${rootfs_storage}" --rootfs "${rootfs_storage}:${rootfs_size}" --onboot 1 --start 0
+    
+    # --- THIS IS THE KEY CHANGE: --unprivileged 0 ---
+    run_with_spinner "Creating LXC container '${hostname}' (ID: ${ctid})" pct create "${ctid}" "${os_template}" --hostname "${hostname}" --password "${password}" --memory "${memory}" --cores "${cores}" --net0 name=eth0,bridge=vmbr0,ip=dhcp --storage "${rootfs_storage}" --rootfs "${rootfs_storage}:${rootfs_size}" --onboot 1 --start 0 --unprivileged 0
 
     log "Configuring LXC for Docker readiness..."
     pct set "${ctid}" --features nesting=1,keyctl=1 --nameserver 8.8.8.8
 
     local os_family="debian"; if echo "${os_template}" | grep -q "alpine"; then os_family="alpine"; fi
     
-    # Apply OS-specific configurations
-    # FIXED: Appends directly to the config file for compatibility
+    # This check is now redundant since we are creating a privileged container,
+    # but it is harmless to leave for compatibility.
     if [[ "$os_family" == "alpine" ]]; then
         local config_file="/etc/pve/lxc/${ctid}.conf"
         if grep -q "lxc.apparmor.profile" "$config_file"; then
@@ -122,7 +124,6 @@ main() {
 
     run_with_spinner "Starting container" pct start "${ctid}"
     
-    
     log "Waiting for network..."
     pct exec "${ctid}" -- sh -c 'until ping -c 1 -W 1 8.8.8.8 &>/dev/null; do sleep 1; done'
     log "Network is ready."
@@ -134,7 +135,6 @@ main() {
         log "Priming complete."
     else
         log "Priming Debian/Ubuntu container (locales, curl)..."
-        # We also remove the spinner from the Debian command for consistency and reliability
         pct exec "${ctid}" -- sh -c "export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install -y locales curl && locale-gen en_US.UTF-8"
         log "Priming complete."
     fi
