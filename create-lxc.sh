@@ -121,7 +121,8 @@ main() {
     fi
 
     run_with_spinner "Starting container" pct start "${ctid}"
-    run_with_spinner "Waiting for network" pct exec "${ctid}" -- sh -c "until sh -c 'echo > /dev/tcp/8.8.8.8/53' &>/dev/null; do sleep 1; done"
+    # This line uses ping, which is universal and works on Alpine
+    run_with_spinner "Waiting for network" pct exec "${ctid}" -- sh -c "until ping -c 1 -W 1 8.8.8.8 &>/dev/null; do sleep 1; done"
 
     # Prime container with necessary tools and configs
     if [[ "$os_family" == "alpine" ]]; then
