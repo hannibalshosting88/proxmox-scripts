@@ -122,7 +122,40 @@ main() {
 
     run_with_spinner "Starting container" pct start "${ctid}"
     # This line uses ping, which is universal and works on Alpine
-    run_with_spinner "Waiting for network" pct exec "${ctid}" -- sh -c "until ping -c 1 -W 1 8.8.8.8 &>/dev/null; do sleep 1; done"
+    #run_with_spinner "Waiting for network" pct exec "${ctid}" -- sh -c "until ping -c 1 -W 1 8.8.8.8 &>/dev/null; do sleep 1; done"
+
+    # --- BEGIN DIAGNOSTIC BLOCK ---
+    log "Running network check with full debug output..."
+    set -x # This prints the exact command being run
+
+    # We run the command directly, without the spinner, to see all output
+    pct exec "${ctid}" -- sh -c '
+        echo "[INFO] --- Test execution inside container has started ---"
+        ATTEMPTS=0
+        MAX_ATTEMPTS=60 # Try for 60 seconds
+        until [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; do
+            if ping -c 1 -W 2 8.8.8.8; then
+                echo "[SUCCESS] --- Ping was successful ---"
+                exit 0
+            fi
+            ATTEMPTS=$((ATTEMPTS+1))
+            echo "[RETRY] --- Ping failed, retrying ($ATTEMPTS/$MAX_ATTEMPTS) ---"
+            sleep 1
+        done
+        echo "[FAIL] --- Network check timed out after $MAX_ATTEMPTS seconds ---"
+        exit 1
+    '
+    
+    # Capture the success or failure of the command above
+    NETWORK_CHECK_EXIT_CODE=$? 
+    set +x # Stop printing debug commands
+
+    if [ $NETWORK_CHECK_EXIT_CODE -ne 0 ]; then
+        fail "Network diagnostic check failed. See output above for clues."
+    else
+        log "Network check passed."
+    fi
+    # --- END DIAGNOSTIC BLOCK ---
 
     # Prime container with necessary tools and configs
     if [[ "$os_family" == "alpine" ]]; then
