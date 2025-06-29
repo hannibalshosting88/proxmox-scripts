@@ -1,6 +1,6 @@
 # ==============================================================================
 # FILENAME: create-lxc.sh
-# VERSION: 2.3 (Production Release)
+# VERSION: 2.4 (Production Release)
 # ==============================================================================
 #!/bin/bash
 
@@ -70,7 +70,7 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v2.3)..."
+    log "Starting Generic LXC Provisioning (v2.4)..."
 
     local ctid
     ctid=$(find_next_id)
@@ -120,7 +120,8 @@ main() {
     if [[ "$os_family" == "alpine" ]]; then
         run_with_spinner "Priming Alpine container with curl" pct exec "${ctid}" -- sh -c "apk update && apk add curl"
     else
-        run_with_spinner "Priming Debian/Ubuntu container (locales, curl)" pct exec "${ctid}" -- sh -c "apt-get update && apt-get install -y locales curl && locale-gen en_US.UTF-8"
+        # THIS IS THE FIX: Ensure apt-get is non-interactive to prevent hangs
+        run_with_spinner "Priming Debian/Ubuntu container (locales, curl)" pct exec "${ctid}" -- sh -c "export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install -y locales curl && locale-gen en_US.UTF-8"
     fi
     
     local container_ip
