@@ -1,64 +1,56 @@
-#!/bin/sh
+#!/bin/bash
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
-# --- Helper Functions ---
+# --- Helper Functions (using bash features) ---
 log() {
-    GREEN='\033[0;32m'
-    NC='\033[0m' # No Color
-    printf "${GREEN}[INFO]${NC} ===> %s\n" "$1" >&2
+    echo -e "\e[32m[INFO]\e[0m ===> $1" >&2
 }
 
 fail() {
-    RED='\033[0;31m'
-    NC='\033[0m' # No Color
-    printf "${RED}[FAIL]${NC} ==> %s\n" "$1" >&2
+    echo -e "\e[31m[FAIL]\e[0m ==> $1" >&2
     exit 1
 }
 
 run_with_spinner() {
-    _message=$1; shift
-    # "$@" now holds the command and all its arguments separately
-    _spinner_chars="/-\|"
-    _i=1
-
+    local message=$1; shift
+    # The rest of the arguments are the command to run
+    local command_to_run=("$@")
+    local spinner_chars="/-\|"
+    
+    # Start spinner in the background
     (
         while true; do
-            _char=$(expr substr "$_spinner_chars" $_i 1)
-            YELLOW='\033[1;33m'
-            NC='\033[0m'
-            printf "${YELLOW}[WORKING]${NC} %s %s\r" "$_char" "$_message" >&2
-            _i=$((_i + 1))
-            if [ $_i -gt $(expr length "$_spinner_chars") ]; then
-                _i=1
-            fi
-            sleep 0.1
+            for (( i=0; i<${#spinner_chars}; i++ )); do
+                echo -ne "\e[1;33m[WORKING]\e[0m \e[1;33m${spinner_chars:$i:1}\e[0m ${message}\r" >&2
+                sleep 0.1
+            done
         done
     ) &
-    _spinner_pid=$!
+    local spinner_pid=$!
 
-    _temp_log=$(mktemp)
+    # Run the actual command, capturing output
+    local temp_log
+    temp_log=$(mktemp)
     
-    # --- THIS IS THE FIX ---
-    # Execute "$@" directly instead of using a new subshell (sh -c).
-    # This ensures that functions defined in the script are visible.
-    if ! "$@" >"$_temp_log" 2>&1; then
-        kill $_spinner_pid
-        printf "\033[2K\r" >&2
-        fail "Task '$_message' failed. Log:\n$(cat "$_temp_log")"
-        rm -f "$_temp_log"
+    # Execute command directly; bash handles functions correctly.
+    if ! "${command_to_run[@]}" > "$temp_log" 2>&1; then
+        kill "$spinner_pid"
+        echo -ne "\033[2K\r" >&2
+        fail "Task '${message}' failed. Log:\n$(cat "$temp_log")"
+        rm -f "$temp_log"
     fi
 
-    kill $_spinner_pid
-    wait $_spinner_pid 2>/dev/null || true
-    rm -f "$_temp_log"
-
-    printf "\033[2K\r" >&2
-    log "Task '$_message' complete."
+    # Stop spinner and clean up
+    kill "$spinner_pid"
+    wait "$spinner_pid" &>/dev/null
+    rm -f "$temp_log"
+    
+    echo -ne "\033[2K\r" >&2
+    log "Task '${message}' complete."
 }
 
-# --- Task-Specific Functions for Spinner (Unchanged) ---
-
+# --- Task-Specific Functions ---
 configure_locales() {
     if ! command -v locale-gen >/dev/null; then
         apt-get update
@@ -81,11 +73,8 @@ setup_docker_repo() {
 }
 
 # --- Main Execution ---
-
 log "Starting Debian/Ubuntu Desktop Installer..."
 
-# --- THIS IS THE OTHER PART OF THE FIX ---
-# Commands are now passed without being quoted into a single string.
 run_with_spinner "Configuring locales" configure_locales
 run_with_spinner "Setting up Docker repository" setup_docker_repo
 run_with_spinner "Installing Docker Engine" apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
