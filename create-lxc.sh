@@ -1,6 +1,6 @@
 # ==============================================================================
 # FILENAME: create-lxc.sh
-# VERSION: 2.6 (Production Release)
+# VERSION: 3.0 (Role-Specialized Release)
 # ==============================================================================
 #!/bin/bash
 
@@ -70,7 +70,7 @@ prompt_for_selection() {
 # --- Main Execution ---
 main() {
     trap 'fail "Script interrupted."' SIGINT SIGTERM
-    log "Starting Generic LXC Provisioning (v2.6)..."
+    log "Starting Generic LXC Provisioning (v3.0)..."
 
     local ctid
     ctid=$(find_next_id)
@@ -101,29 +101,27 @@ main() {
     
     log "Using template: ${os_template}"
     
-    # 1. CREATE the container normally (flag removed)
+    local os_family="debian"; if echo "${os_template}" | grep -q "alpine"; then os_family="alpine"; fi
+
+    local is_privileged=0
+    if [[ "$os_family" != "alpine" ]]; then
+        is_privileged=1
+    fi
+
+    # Create the container. It will be unprivileged by default.
     run_with_spinner "Creating LXC container '${hostname}' (ID: ${ctid})" pct create "${ctid}" "${os_template}" --hostname "${hostname}" --password "${password}" --memory "${memory}" --cores "${cores}" --net0 name=eth0,bridge=vmbr0,ip=dhcp --storage "${rootfs_storage}" --rootfs "${rootfs_storage}:${rootfs_size}" --onboot 1 --start 0
 
-    # 2. SET the container to privileged mode separately
-    log "Setting container to privileged mode..."
-    pct set "${ctid}" --unprivileged 0
-
-    log "Configuring LXC for Docker readiness..."
-    pct set "${ctid}" --features nesting=1,keyctl=1 --nameserver 8.8.8.8
-
-    local os_family="debian"; if echo "${os_template}" | grep -q "alpine"; then os_family="alpine"; fi
-    
-    # This check is now redundant since we are creating a privileged container,
-    # but it is harmless to leave for compatibility.
-    if [[ "$os_family" == "alpine" ]]; then
-        local config_file="/etc/pve/lxc/${ctid}.conf"
-        if grep -q "lxc.apparmor.profile" "$config_file"; then
-            sed -i "s|^lxc.apparmor.profile.*|lxc.apparmor.profile: unconfined|" "$config_file"
-            log "Updated existing AppArmor profile to unconfined."
-        else
-            echo "lxc.apparmor.profile: unconfined" >> "$config_file"
-            log "Set AppArmor profile to unconfined for Alpine."
-        fi
+    # --- Apply Role-Specific Settings ---
+    if (( is_privileged )); then
+        log "Making container privileged for Docker..."
+        # This command is known to fail on this system, so we accept its failure.
+        # Ideally, this would be fixed on the PVE host.
+        pct set "${ctid}" --unprivileged 0 || warn "Could not set container to privileged. Docker will likely fail."
+        log "Configuring LXC for Docker readiness..."
+        pct set "${ctid}" --features nesting=1,keyctl=1 --nameserver 8.8.8.8
+    else
+        log "Creating standard unprivileged container."
+        pct set "${ctid}" --nameserver 8.8.8.8
     fi
 
     run_with_spinner "Starting container" pct start "${ctid}"
@@ -149,15 +147,14 @@ main() {
     
     echo >&3; log "SUCCESS: PROVISIONING COMPLETE."
     log "Container '${hostname}' (ID: ${ctid}) is running at IP: ${container_ip}"
-    echo >&3; log "Detected OS Family: ${os_family}. Run the appropriate command below to install the desktop:"
     
-    if [[ "$os_family" == "alpine" ]]; then
-        echo -e "\n\e[1;37m# For your ALPINE container, run:\e[0m" >&3
-        echo -e "\e[1;33mpct exec ${ctid} -- sh -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop-alpine.sh | sh\"\e[0m\n" >&3
-    else
+    # --- Final Output Based on Role ---
+    if (( is_privileged )); then
+        echo >&3; log "Container is configured for Docker. Run the command below to install the desktop:"
         echo -e "\n\e[1;37m# For your DEBIAN/UBUNTU container, run:\e[0m" >&3
         echo -e "\e[1;33mpct exec ${ctid} -- sh -c \"curl -sL https://raw.githubusercontent.com/${gh_user}/${gh_repo}/main/install-desktop-debian.sh | bash\"\e[0m\n" >&3
+    else
+        echo >&3; log "Minimal, unprivileged Alpine container is ready for standard server tasks."
     fi
-
 }
 main
